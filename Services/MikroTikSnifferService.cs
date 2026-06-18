@@ -141,6 +141,12 @@ public class MikroTikSnifferService : IDisposable
                 packet.DstPort = (data[transportOffset + 2] << 8) | data[transportOffset + 3];
             }
 
+            // Parse TCP flags (offset 13 in TCP header)
+            if (protocol == 6 && transportOffset + 14 <= length)
+            {
+                packet.TcpFlags = data[transportOffset + 13];
+            }
+
             return packet;
         }
         catch

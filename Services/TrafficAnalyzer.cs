@@ -24,12 +24,19 @@ public class TrafficAnalyzer
     private readonly List<ThreatSignature> _signatures;
     private readonly ConcurrentDictionary<string, PortScanState> _portScans = new();
     private readonly ConcurrentDictionary<string, BruteForceState> _bruteForce = new();
+    private readonly ConcurrentDictionary<string, SynFloodState> _synFloods = new();
+    private readonly ConcurrentDictionary<string, HttpsConnection> _httpsConnections = new();
 
     private const int PortScanThreshold = 20;    // уникальных портов за 10 сек
     private const int BruteForceThreshold = 10;   // попыток за 10 сек
+    private const int SynFloodThreshold = 100;    // SYN-пакетов за 10 сек на один IP
     private const int WindowSeconds = 10;
 
     public event Action<Alert>? OnAlert;
+    public event Action<HttpsConnection>? OnHttpsConnectionUpdate;
+
+    public IReadOnlyCollection<HttpsConnection> HttpsConnections => 
+        _httpsConnections.Values.ToList().AsReadOnly();
 
     public TrafficAnalyzer()
     {
@@ -66,6 +73,12 @@ public class TrafficAnalyzer
 
         // 3. Поведенческий анализ — Brute Force
         DetectBruteForce(packet);
+
+        // 4. SYN Flood detection на 443 порт
+        DetectSynFlood(packet);
+
+        // 5. Трекинг HTTPS-соединений (порт 443)
+        TrackHttpsConnection(packet);
     }
 
     private void DetectPortScan(RawPacket packet)
@@ -129,6 +142,124 @@ public class TrafficAnalyzer
                     Score = 90
                 });
                 state.Reset();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Обнаружение SYN Flood атаки на 443 порт
+    /// </summary>
+    private void DetectSynFlood(RawPacket packet)
+    {
+        if (packet.DstPort != 443 || packet.Protocol != "TCP") return;
+        
+        // Проверяем, что это SYN-пакет (флаг SYN=2) без ACK (флаг ACK=16)
+        bool isSyn = (packet.TcpFlags & 0x02) != 0;
+        bool isAck = (packet.TcpFlags & 0x10) != 0;
+        if (!isSyn || isAck) return; // только чистые SYN
+
+        var state = _synFloods.GetOrAdd(packet.SrcIp, _ => new SynFloodState());
+        lock (state)
+        {
+            state.PurgeOld(WindowSeconds);
+            state.AddAttempt(packet.Timestamp);
+
+            if (state.AttemptsInWindow(WindowSeconds) >= SynFloodThreshold)
+            {
+                EmitAlert(new Alert
+                {
+                    Timestamp = DateTime.Now,
+                    Level = ThreatLevel.Critical,
+                    Category = "SYN Flood",
+                    Title = $"SYN Flood атака на порт 443 с {packet.SrcIp}",
+                    Description = $"IP {packet.SrcIp} — {state.AttemptsInWindow(WindowSeconds)} SYN-пакетов за {WindowSeconds}с на порт 443",
+                    SrcIp = packet.SrcIp,
+                    DstIp = packet.DstIp,
+                    DstPort = 443,
+                    Protocol = "TCP",
+                    PacketCount = state.TotalAttempts,
+                    Score = 95
+                });
+                state.Reset();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Трекинг HTTPS-соединений (порт 443) — SYN/SYN-ACK/RST/FIN
+    /// </summary>
+    private void TrackHttpsConnection(RawPacket packet)
+    {
+        if (packet.DstPort != 443 || packet.Protocol != "TCP") return;
+
+        bool isSyn = (packet.TcpFlags & 0x02) != 0;
+        bool isAck = (packet.TcpFlags & 0x10) != 0;
+        bool isRst = (packet.TcpFlags & 0x04) != 0;
+        bool isFin = (packet.TcpFlags & 0x01) != 0;
+
+        // Ключ: srcIp:srcPort -> dstIp:443 (уникальная пара)
+        var connKey = $"{packet.SrcIp}:{packet.SrcPort}->{packet.DstIp}:443";
+
+        if (isSyn && !isAck)
+        {
+            // Новый SYN — создаём или обновляем
+            var conn = _httpsConnections.GetOrAdd(connKey, _ => new HttpsConnection
+            {
+                Timestamp = DateTime.Now,
+                SrcIp = packet.SrcIp,
+                DstIp = packet.DstIp,
+                SrcPort = packet.SrcPort,
+                DstPort = 443,
+                State = ConnectionState.SynSent
+            });
+            conn.PacketCount++;
+            conn.BytesTransferred += packet.PacketLength;
+            OnHttpsConnectionUpdate?.Invoke(conn);
+        }
+        else if (isSyn && isAck)
+        {
+            // SYN-ACK — соединение установлено
+            if (_httpsConnections.TryGetValue(connKey, out var conn))
+            {
+                conn.State = ConnectionState.Established;
+                conn.PacketCount++;
+                conn.BytesTransferred += packet.PacketLength;
+                OnHttpsConnectionUpdate?.Invoke(conn);
+            }
+        }
+        else if (isRst || isFin)
+        {
+            // RST или FIN — соединение закрыто
+            if (_httpsConnections.TryGetValue(connKey, out var conn))
+            {
+                conn.State = ConnectionState.Closed;
+                conn.PacketCount++;
+                conn.BytesTransferred += packet.PacketLength;
+                OnHttpsConnectionUpdate?.Invoke(conn);
+            }
+        }
+        else
+        {
+            // Обычный data-пакет на установленном соединении
+            if (_httpsConnections.TryGetValue(connKey, out var conn))
+            {
+                conn.PacketCount++;
+                conn.BytesTransferred += packet.PacketLength;
+            }
+        }
+
+        // Очистка старых закрытых соединений (раз в 100 пакетов)
+        if (_httpsConnections.Count > 5000)
+        {
+            var cutoff = DateTime.UtcNow.AddMinutes(-5);
+            foreach (var key in _httpsConnections.Keys)
+            {
+                if (_httpsConnections.TryGetValue(key, out var c) && 
+                    c.State == ConnectionState.Closed && 
+                    c.Timestamp < cutoff)
+                {
+                    _httpsConnections.TryRemove(key, out _);
+                }
             }
         }
     }
@@ -270,6 +401,35 @@ public class TrafficAnalyzer
     }
 
     private class BruteForceState
+    {
+        private readonly List<DateTime> _attempts = new();
+        public long TotalAttempts { get; private set; }
+
+        public void AddAttempt(DateTime time)
+        {
+            _attempts.Add(time);
+            TotalAttempts++;
+        }
+
+        public int AttemptsInWindow(int seconds)
+        {
+            var cutoff = DateTime.UtcNow.AddSeconds(-seconds);
+            return _attempts.Count(a => a > cutoff);
+        }
+
+        public void PurgeOld(int seconds)
+        {
+            var cutoff = DateTime.UtcNow.AddSeconds(-seconds * 3);
+            _attempts.RemoveAll(a => a < cutoff);
+        }
+
+        public void Reset()
+        {
+            _attempts.Clear();
+        }
+    }
+
+    private class SynFloodState
     {
         private readonly List<DateTime> _attempts = new();
         public long TotalAttempts { get; private set; }

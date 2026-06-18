@@ -20,7 +20,6 @@
     </Window.DataContext>
 
     <Window.Resources>
-        <!-- Converters -->
         <Style x:Key="AlertCardStyle" TargetType="Border">
             <Setter Property="CornerRadius" Value="8"/>
             <Setter Property="Padding" Value="12"/>
@@ -41,6 +40,48 @@
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Foreground" Value="#90CAF9"/>
             <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
+
+        <!-- TabControl style -->
+        <Style TargetType="TabControl">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="TabStripPlacement" Value="Top"/>
+        </Style>
+
+        <Style TargetType="TabItem">
+            <Setter Property="Background" Value="#16213E"/>
+            <Setter Property="Foreground" Value="#78909C"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="BorderThickness" Value="0,0,0,2"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border Name="Border" Background="{TemplateBinding Background}" 
+                                BorderBrush="{TemplateBinding BorderBrush}" 
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}" Margin="0,0,4,0"
+                                CornerRadius="6,6,0,0">
+                            <ContentPresenter ContentSource="Header" 
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#1A1A2E"/>
+                                <Setter TargetName="Border" Property="BorderBrush" Value="#90CAF9"/>
+                                <Setter Property="Foreground" Value="#90CAF9"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="#B0BEC5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </Window.Resources>
 
@@ -120,62 +161,84 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
                 <!-- Stat: Packets -->
-                <Border Grid.Column="0" Style="{StaticResource StatCardStyle}" Margin="0,0,6,0">
+                <Border Grid.Column="0" Style="{StaticResource StatCardStyle}" Margin="0,0,4,0">
                     <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="📦" FontSize="20" HorizontalAlignment="Center"/>
+                        <TextBlock Text="📦" FontSize="18" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding Stats.TotalPackets, StringFormat={}{0:N0}}" 
-                                   FontSize="22" FontWeight="Bold" Foreground="#64B5F6" HorizontalAlignment="Center"/>
-                        <TextBlock Text="Пакетов" FontSize="11" Foreground="#78909C" HorizontalAlignment="Center"/>
+                                   FontSize="20" FontWeight="Bold" Foreground="#64B5F6" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Пакетов" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
 
                 <!-- Stat: Critical -->
-                <Border Grid.Column="1" Style="{StaticResource StatCardStyle}" Margin="6,0">
+                <Border Grid.Column="1" Style="{StaticResource StatCardStyle}" Margin="4,0">
                     <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="💀" FontSize="20" HorizontalAlignment="Center"/>
+                        <TextBlock Text="💀" FontSize="18" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding Stats.AlertsCritical}" 
-                                   FontSize="22" FontWeight="Bold" Foreground="#F44336" HorizontalAlignment="Center"/>
-                        <TextBlock Text="Критические" FontSize="11" Foreground="#78909C" HorizontalAlignment="Center"/>
+                                   FontSize="20" FontWeight="Bold" Foreground="#F44336" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Критические" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
 
                 <!-- Stat: High -->
-                <Border Grid.Column="2" Style="{StaticResource StatCardStyle}" Margin="6,0">
+                <Border Grid.Column="2" Style="{StaticResource StatCardStyle}" Margin="4,0">
                     <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="🔴" FontSize="20" HorizontalAlignment="Center"/>
+                        <TextBlock Text="🔴" FontSize="18" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding Stats.AlertsHigh}" 
-                                   FontSize="22" FontWeight="Bold" Foreground="#FF5722" HorizontalAlignment="Center"/>
-                        <TextBlock Text="Высокие" FontSize="11" Foreground="#78909C" HorizontalAlignment="Center"/>
+                                   FontSize="20" FontWeight="Bold" Foreground="#FF5722" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Высокие" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
 
                 <!-- Stat: Medium -->
-                <Border Grid.Column="3" Style="{StaticResource StatCardStyle}" Margin="6,0">
+                <Border Grid.Column="3" Style="{StaticResource StatCardStyle}" Margin="4,0">
                     <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="⚡" FontSize="20" HorizontalAlignment="Center"/>
+                        <TextBlock Text="⚡" FontSize="18" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding Stats.AlertsMedium}" 
-                                   FontSize="22" FontWeight="Bold" Foreground="#FF9800" HorizontalAlignment="Center"/>
-                        <TextBlock Text="Средние" FontSize="11" Foreground="#78909C" HorizontalAlignment="Center"/>
+                                   FontSize="20" FontWeight="Bold" Foreground="#FF9800" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Средние" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
 
                 <!-- Stat: Total Alerts -->
-                <Border Grid.Column="4" Style="{StaticResource StatCardStyle}" Margin="6,0">
+                <Border Grid.Column="4" Style="{StaticResource StatCardStyle}" Margin="4,0">
                     <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="🚨" FontSize="20" HorizontalAlignment="Center"/>
+                        <TextBlock Text="🚨" FontSize="18" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding Stats.AlertsToday}" 
-                                   FontSize="22" FontWeight="Bold" Foreground="#E040FB" HorizontalAlignment="Center"/>
-                        <TextBlock Text="Всего алертов" FontSize="11" Foreground="#78909C" HorizontalAlignment="Center"/>
+                                   FontSize="20" FontWeight="Bold" Foreground="#E040FB" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Алертов" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Stat: HTTPS connections -->
+                <Border Grid.Column="5" Style="{StaticResource StatCardStyle}" Margin="4,0">
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="🔒" FontSize="18" HorizontalAlignment="Center"/>
+                        <TextBlock Text="{Binding HttpsConnectionCount}" 
+                                   FontSize="20" FontWeight="Bold" Foreground="#66BB6A" HorizontalAlignment="Center"/>
+                        <TextBlock Text="HTTPS конн." FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Stat: HTTPS Established -->
+                <Border Grid.Column="6" Style="{StaticResource StatCardStyle}" Margin="4,0">
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="✅" FontSize="18" HorizontalAlignment="Center"/>
+                        <TextBlock Text="{Binding HttpsEstablishedCount}" 
+                                   FontSize="20" FontWeight="Bold" Foreground="#4CAF50" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Установлено" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
 
                 <!-- Stat: Status -->
-                <Border Grid.Column="5" Style="{StaticResource StatCardStyle}" Margin="6,0,0,0">
+                <Border Grid.Column="7" Style="{StaticResource StatCardStyle}" Margin="4,0,0,0">
                     <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="{Binding IsConnected, Converter={x:Null}}" FontSize="20" HorizontalAlignment="Center">
+                        <TextBlock FontSize="18" HorizontalAlignment="Center">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Text" Value="⏹️"/>
@@ -187,8 +250,8 @@
                                 </Style>
                             </TextBlock.Style>
                         </TextBlock>
-                        <TextBlock Text="Статус" FontSize="11" Foreground="#78909C" HorizontalAlignment="Center"/>
-                        <TextBlock Text="{Binding ConnectionStatus}" FontSize="11" Foreground="#B0BEC5" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Статус" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                        <TextBlock Text="{Binding ConnectionStatus}" FontSize="10" Foreground="#B0BEC5" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
             </Grid>
@@ -198,7 +261,7 @@
         <Grid Grid.Row="2" Margin="0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="380"/>
+                <ColumnDefinition Width="400"/>
             </Grid.ColumnDefinitions>
 
             <!-- LEFT: Alert List -->
@@ -227,11 +290,9 @@
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
 
-                                            <!-- Icon -->
                                             <TextBlock Grid.Column="0" Text="{Binding LevelIcon}" FontSize="20" 
                                                        VerticalAlignment="Top" Margin="0,2,0,0"/>
 
-                                            <!-- Content -->
                                             <StackPanel Grid.Column="1" Margin="8,0">
                                                 <StackPanel Orientation="Horizontal">
                                                     <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="14" Foreground="White"/>
@@ -248,7 +309,6 @@
                                                 </StackPanel>
                                             </StackPanel>
 
-                                            <!-- Time -->
                                             <TextBlock Grid.Column="2" Text="{Binding Timestamp, StringFormat='HH:mm:ss'}" 
                                                        FontSize="11" Foreground="#546E7A" VerticalAlignment="Top"/>
                                         </Grid>
@@ -260,60 +320,134 @@
                 </Grid>
             </Border>
 
-            <!-- RIGHT: Recent Alerts + Info -->
+            <!-- RIGHT: Tabbed panel -->
             <Border Grid.Column="1" Background="#16213E" BorderBrush="#1A1A2E" BorderThickness="1,0,0,0">
-                <Grid Margin="12,12,16,12">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
+                <Grid Margin="8,12,12,12">
+                    <TabControl>
+                        <TabItem Header="🔥 Алерты">
+                            <Grid Margin="0,8,0,0">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
 
-                    <!-- Recent alerts header -->
-                    <TextBlock Grid.Row="0" Text="🔥 Последние алерты" Style="{StaticResource SectionHeaderStyle}"/>
+                                <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+                                    <ItemsControl ItemsSource="{Binding RecentAlerts}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="{x:Type models:Alert}">
+                                                <Border Style="{StaticResource AlertCardStyle}"
+                                                        BorderBrush="{Binding LevelColor}"
+                                                        Margin="0,0,0,4">
+                                                    <Border.Background>
+                                                        <SolidColorBrush Color="{Binding LevelColor}" Opacity="0.06"/>
+                                                    </Border.Background>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="28"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                        </Grid.ColumnDefinitions>
 
-                    <!-- Recent alerts list -->
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                        <ItemsControl ItemsSource="{Binding RecentAlerts}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate DataType="{x:Type models:Alert}">
-                                    <Border Style="{StaticResource AlertCardStyle}"
-                                            BorderBrush="{Binding LevelColor}"
-                                            Margin="0,0,0,4">
-                                        <Border.Background>
-                                            <SolidColorBrush Color="{Binding LevelColor}" Opacity="0.06"/>
-                                        </Border.Background>
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="28"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0" Text="{Binding LevelIcon}" FontSize="16" VerticalAlignment="Top"/>
+                                                        <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="12" Foreground="White"/>
+                                                            <TextBlock Text="{Binding Category}" FontSize="10" Foreground="#78909C"/>
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
 
-                                            <TextBlock Grid.Column="0" Text="{Binding LevelIcon}" FontSize="16" VerticalAlignment="Top"/>
-                                            <StackPanel Grid.Column="1" Margin="6,0,0,0">
-                                                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="12" Foreground="White"/>
-                                                <TextBlock Text="{Binding Category}" FontSize="10" Foreground="#78909C"/>
-                                            </StackPanel>
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
+                                <Border Grid.Row="1" Background="#0D1B2A" CornerRadius="8" Padding="10" Margin="0,6,0,0"
+                                        BorderBrush="#2A2A4A" BorderThickness="1">
+                                    <TextBlock FontSize="10" Foreground="#546E7A">
+                                        <Run Text="💡 "/><Run Text="DPI Home v1.0 — Анализ трафика в реальном времени"/>
+                                    </TextBlock>
+                                </Border>
+                            </Grid>
+                        </TabItem>
 
-                    <!-- Bottom info -->
-                    <Border Grid.Row="2" Background="#0D1B2A" CornerRadius="8" Padding="12" Margin="0,8,0,0"
-                            BorderBrush="#2A2A4A" BorderThickness="1">
-                        <StackPanel>
-                            <TextBlock FontSize="11" Foreground="#546E7A">
-                                <Run Text="💡 " /><Run Text="DPI Home v1.0 — " />
-                                <Run Text="Анализ трафика в реальном времени"/>
-                            </TextBlock>
-                            <TextBlock FontSize="10" Foreground="#37474F" Margin="0,4,0,0">
-                                MikroTik Packet Sniffer → DPI → Поведенческий анализ
-                            </TextBlock>
-                        </StackPanel>
-                    </Border>
+                        <TabItem Header="🔒 HTTPS (443)">
+                            <Grid Margin="0,8,0,0">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+
+                                <!-- HTTPS mini-stats -->
+                                <Border Grid.Row="0" Background="#0D1B2A" CornerRadius="8" Padding="10" Margin="0,0,0,8"
+                                        BorderBrush="#2A2A4A" BorderThickness="1">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" HorizontalAlignment="Center">
+                                            <TextBlock Text="{Binding HttpsConnectionCount}" FontSize="18" FontWeight="Bold" Foreground="#66BB6A" HorizontalAlignment="Center"/>
+                                            <TextBlock Text="Всего" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" HorizontalAlignment="Center">
+                                            <TextBlock Text="{Binding HttpsEstablishedCount}" FontSize="18" FontWeight="Bold" Foreground="#4CAF50" HorizontalAlignment="Center"/>
+                                            <TextBlock Text="Установлено" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" HorizontalAlignment="Center">
+                                            <TextBlock Text="{Binding HttpsSynFloodCount}" FontSize="18" FontWeight="Bold" Foreground="#F44336" HorizontalAlignment="Center"/>
+                                            <TextBlock Text="SYN Flood" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+
+                                <!-- HTTPS connections list -->
+                                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                                    <ItemsControl ItemsSource="{Binding HttpsConnections}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="{x:Type models:HttpsConnection}">
+                                                <Border Style="{StaticResource AlertCardStyle}"
+                                                        BorderBrush="{Binding StateColor}"
+                                                        Margin="0,0,0,4">
+                                                    <Border.Background>
+                                                        <SolidColorBrush Color="{Binding StateColor}" Opacity="0.06"/>
+                                                    </Border.Background>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="28"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+
+                                                        <TextBlock Grid.Column="0" Text="{Binding StateIcon}" FontSize="14" VerticalAlignment="Top" Margin="0,2,0,0"/>
+
+                                                        <StackPanel Grid.Column="1" Margin="6,0">
+                                                            <StackPanel Orientation="Horizontal">
+                                                                <TextBlock Text="{Binding SrcIp}" FontWeight="SemiBold" FontSize="12" Foreground="White"/>
+                                                                <TextBlock Text=":" FontSize="11" Foreground="#78909C" Margin="2,0"/>
+                                                                <TextBlock Text="{Binding SrcPort}" FontSize="11" Foreground="#78909C"/>
+                                                            </StackPanel>
+                                                            <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                                                <TextBlock Text="→ " FontSize="11" Foreground="#546E7A"/>
+                                                                <TextBlock Text="{Binding DstIp}" FontSize="11" Foreground="#B0BEC5"/>
+                                                                <TextBlock Text=":443" FontSize="11" Foreground="#78909C"/>
+                                                            </StackPanel>
+                                                            <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                                                <TextBlock Text="{Binding PacketCount, StringFormat='📦 {0}'}" FontSize="10" Foreground="#546E7A" Margin="0,0,12,0"/>
+                                                                <TextBlock Text="{Binding BytesTransferred, StringFormat='📊 {0:N0} байт'}" FontSize="10" Foreground="#546E7A"/>
+                                                            </StackPanel>
+                                                        </StackPanel>
+
+                                                        <Border Grid.Column="2" Background="{Binding StateColor}" CornerRadius="4" Padding="6,2" VerticalAlignment="Top">
+                                                            <TextBlock Text="{Binding StateLabel}" FontSize="9" FontWeight="Bold" Foreground="White"/>
+                                                        </Border>
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </Grid>
+                        </TabItem>
+                    </TabControl>
                 </Grid>
             </Border>
         </Grid>
