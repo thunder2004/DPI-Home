@@ -43,6 +43,7 @@ public class MikroTikSnifferService : IDisposable
             _listener = new TcpListener(IPAddress.Any, _listenPort);
             _listener.Start();
             OnConnectionChanged?.Invoke(false);
+            OnError?.Invoke($"✅ Сервер запущен на порту {_listenPort}, ожидаю подключения MikroTik...");
 
             _acceptTask = AcceptLoopAsync(_cts.Token);
             await Task.CompletedTask;
@@ -61,6 +62,8 @@ public class MikroTikSnifferService : IDisposable
             {
                 _client = await _listener.AcceptTcpClientAsync(ct);
                 _stream = _client.GetStream();
+                var remoteEp = _client.Client.RemoteEndPoint?.ToString() ?? "unknown";
+                OnError?.Invoke($"🔗 MikroTik подключился с {remoteEp}");
                 OnConnectionChanged?.Invoke(true);
 
                 _readTask = Task.Run(() => ReadLoopAsync(ct));
