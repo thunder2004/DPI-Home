@@ -20,10 +20,9 @@ public class MainViewModel : INotifyPropertyChanged
 
     private TrafficStats _stats = new();
     private bool _isConnected;
-    private string _connectionStatus = "Отключено";
-    private string _statusColor = "#F44336";
-    private string _hostAddress = "192.168.105.1";
-    private int _hostPort = 2000;
+    private string _connectionStatus = "Ожидание подключения MikroTik...";
+    private string _statusColor = "#FF9800";
+    private int _listenPort = 2000;
     private long _packetCounter;
     private int _httpsConnectionCount;
     private int _httpsEstablishedCount;
@@ -46,8 +45,8 @@ public class MainViewModel : INotifyPropertyChanged
         {
             _isConnected = value;
             OnPropertyChanged();
-            ConnectionStatus = value ? "Подключено" : "Отключено";
-            StatusColor = value ? "#4CAF50" : "#F44336";
+            ConnectionStatus = value ? "✅ MikroTik подключён" : "⏳ Ожидание подключения MikroTik...";
+            StatusColor = value ? "#4CAF50" : "#FF9800";
         }
     }
 
@@ -63,16 +62,10 @@ public class MainViewModel : INotifyPropertyChanged
         set { _statusColor = value; OnPropertyChanged(); }
     }
 
-    public string HostAddress
+    public int ListenPort
     {
-        get => _hostAddress;
-        set { _hostAddress = value; OnPropertyChanged(); }
-    }
-
-    public int HostPort
-    {
-        get => _hostPort;
-        set { _hostPort = value; OnPropertyChanged(); }
+        get => _listenPort;
+        set { _listenPort = value; OnPropertyChanged(); }
     }
 
     public int HttpsConnectionCount
@@ -93,11 +86,14 @@ public class MainViewModel : INotifyPropertyChanged
         set { _httpsSynFloodCount = value; OnPropertyChanged(); }
     }
 
-    public ICommand ConnectCommand { get; }
+    public ICommand StartCommand { get; }
+    public ICommand StopCommand { get; }
 
     public MainViewModel()
     {
-        ConnectCommand = new AsyncRelayCommand(ConnectAsync);
+        StartCommand = new AsyncRelayCommand(StartAsync);
+        StopCommand = new RelayCommand(Stop);
+
         _sniffer = CreateSniffer();
         _analyzer = new TrafficAnalyzer();
 
@@ -114,24 +110,29 @@ public class MainViewModel : INotifyPropertyChanged
 
     private MikroTikSnifferService CreateSniffer()
     {
-        var s = new MikroTikSnifferService(_hostAddress, _hostPort);
+        var s = new MikroTikSnifferService(_listenPort);
         s.OnPacketReceived += OnPacketReceived;
         s.OnError += OnError;
         s.OnConnectionChanged += OnConnectionChanged;
         return s;
     }
 
-    public async Task ConnectAsync()
+    public async Task StartAsync()
     {
         if (IsConnected)
         {
-            _sniffer.Stop();
-            IsConnected = false;
+            Stop();
             return;
         }
 
         _sniffer = CreateSniffer();
         await _sniffer.StartAsync();
+    }
+
+    public void Stop()
+    {
+        _sniffer.Stop();
+        IsConnected = false;
     }
 
     private void OnPacketReceived(RawPacket packet)
@@ -161,7 +162,6 @@ public class MainViewModel : INotifyPropertyChanged
         {
             lock (_httpsLock)
             {
-                // Ищем существующее соединение по ключу
                 var existing = HttpsConnections.FirstOrDefault(c =>
                     c.SrcIp == conn.SrcIp && c.SrcPort == conn.SrcPort &&
                     c.DstIp == conn.DstIp && c.DstPort == conn.DstPort);
@@ -176,7 +176,6 @@ public class MainViewModel : INotifyPropertyChanged
                     HttpsConnections.Insert(0, conn);
                 }
 
-                // Ограничим список
                 while (HttpsConnections.Count > 500)
                     HttpsConnections.RemoveAt(HttpsConnections.Count - 1);
             }
@@ -192,7 +191,7 @@ public class MainViewModel : INotifyPropertyChanged
                 Timestamp = DateTime.Now,
                 Level = ThreatLevel.High,
                 Category = "System",
-                Title = "Ошибка захвата",
+                Title = "Ошибка",
                 Description = error,
                 Score = 0
             });
