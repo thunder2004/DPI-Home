@@ -59,6 +59,17 @@ public class AlertGroup
         }
     }
 
+    public string AttackTypes
+    {
+        get
+        {
+            var parts = Categories
+                .OrderByDescending(c => c.Value.Count)
+                .Select(c => $"{c.Key} x{c.Value.Count}");
+            return string.Join(", ", parts);
+        }
+    }
+
     public string CountLabel => TotalCount switch
     {
         1 => "1 раз",
