@@ -22,7 +22,7 @@ public class MainViewModel : INotifyPropertyChanged
     private bool _isConnected;
     private string _connectionStatus = "Ожидание подключения MikroTik...";
     private string _statusColor = "#FF9800";
-    private int _listenPort = 2000;
+    private int _listenPort = 37008;
     private long _packetCounter;
     private int _httpsConnectionCount;
     private int _httpsEstablishedCount;
