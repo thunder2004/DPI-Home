@@ -4,8 +4,7 @@ using DPI_Home.Models;
 namespace DPI_Home.Services;
 
 /// <summary>
-/// Агрегатор алертов — группирует однотипные события по ключу
-/// и отправляет их пачками, чтобы лог не был простынёй
+/// Агрегатор алертов — группирует все события от одного IP в одну карточку
 /// </summary>
 public class AlertAggregator : IDisposable
 {
@@ -21,10 +20,6 @@ public class AlertAggregator : IDisposable
         _flushTimer = new Timer(_ => FlushExpired(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
     }
 
-    /// <summary>
-    /// Добавить алерт в агрегатор. Если есть группа с таким же ключом — увеличиваем счётчик.
-    /// Если группа "созрела" (прошло 30 сек с последнего обновления) — отправляем.
-    /// </summary>
     public void Add(Alert alert)
     {
         var key = BuildKey(alert);
@@ -32,32 +27,38 @@ public class AlertAggregator : IDisposable
         var group = _groups.GetOrAdd(key, _ => new AlertGroup
         {
             GroupKey = key,
-            Category = alert.Category,
-            Title = alert.Title,
-            Description = alert.Description,
             SrcIp = alert.SrcIp,
-            DstIp = alert.DstIp,
-            DstPort = alert.DstPort,
-            Protocol = alert.Protocol,
-            Level = alert.Level,
             FirstSeen = alert.Timestamp,
             LastSeen = alert.Timestamp,
             TotalCount = 0,
-            MaxScore = 0
+            MaxLevel = ThreatLevel.Info,
+            Categories = new Dictionary<string, ThreatInfo>()
         });
 
         lock (group)
         {
             group.LastSeen = alert.Timestamp;
             group.TotalCount++;
-            if (alert.Score > group.MaxScore) group.MaxScore = alert.Score;
-            if (alert.Level > group.Level) group.Level = alert.Level;
+
+            if (alert.Level > group.MaxLevel)
+                group.MaxLevel = alert.Level;
+
+            // Обновляем статистику по категории
+            var catKey = alert.Category;
+            if (!group.Categories.ContainsKey(catKey))
+            {
+                group.Categories[catKey] = new ThreatInfo
+                {
+                    Icon = alert.LevelIcon,
+                    Count = 0
+                };
+            }
+            group.Categories[catKey].Count++;
+            if (alert.LevelIcon != group.Categories[catKey].Icon)
+                group.Categories[catKey].Icon = alert.LevelIcon;
         }
     }
 
-    /// <summary>
-    /// Отправить все накопившиеся группы немедленно (при очистке лога, остановке и т.д.)
-    /// </summary>
     public void FlushAll()
     {
         lock (_flushLock)
@@ -108,8 +109,8 @@ public class AlertAggregator : IDisposable
 
     private static string BuildKey(Alert alert)
     {
-        // Группируем по категории + IP источника + порту назначения
-        return $"{alert.Category}|{alert.SrcIp}|{alert.DstPort}";
+        // Группируем ТОЛЬКО по Src IP — все события от одного IP в одну карточку
+        return alert.SrcIp;
     }
 
     public void Dispose()

@@ -28,6 +28,13 @@ public class MainViewModel : INotifyPropertyChanged
     private int _httpsEstablishedCount;
     private int _httpsSynFloodCount;
 
+    // MikroTik API settings
+    private string _mikrotikHost = "192.168.105.1";
+    private string _mikrotikUser = "admin";
+    private string _mikrotikPassword = "";
+    private bool _mikrotikConnected;
+    private MikroTikApiService? _mikrotikApi;
+
     public ObservableCollection<AlertGroup> AlertGroups { get; } = new();
     public ObservableCollection<HttpsServerGroup> HttpsServerGroups { get; } = new();
 
@@ -85,15 +92,44 @@ public class MainViewModel : INotifyPropertyChanged
         set { _httpsSynFloodCount = value; OnPropertyChanged(); }
     }
 
+    // MikroTik API properties
+    public string MikrotikHost
+    {
+        get => _mikrotikHost;
+        set { _mikrotikHost = value; OnPropertyChanged(); }
+    }
+
+    public string MikrotikUser
+    {
+        get => _mikrotikUser;
+        set { _mikrotikUser = value; OnPropertyChanged(); }
+    }
+
+    public string MikrotikPassword
+    {
+        get => _mikrotikPassword;
+        set { _mikrotikPassword = value; OnPropertyChanged(); }
+    }
+
+    public bool MikrotikConnected
+    {
+        get => _mikrotikConnected;
+        set { _mikrotikConnected = value; OnPropertyChanged(); }
+    }
+
     public ICommand StartCommand { get; }
     public ICommand StopCommand { get; }
     public ICommand ClearLogCommand { get; }
+    public ICommand ConnectMikrotikCommand { get; }
+        public ICommand BlockIpCommand { get; }
 
-    public MainViewModel()
+        public MainViewModel()
     {
         StartCommand = new AsyncRelayCommand(StartAsync);
         StopCommand = new RelayCommand(Stop);
         ClearLogCommand = new RelayCommand(ClearLog);
+        ConnectMikrotikCommand = new AsyncRelayCommand(ConnectMikrotikAsync);
+        BlockIpCommand = new AsyncRelayCommand<string>(BlockIp);
 
         _sniffer = CreateSniffer();
         _analyzer = new TrafficAnalyzer();
@@ -147,6 +183,76 @@ public class MainViewModel : INotifyPropertyChanged
         });
     }
 
+    /// <summary>
+    /// Подключение к MikroTik REST API
+    /// </summary>
+    public async Task ConnectMikrotikAsync()
+    {
+        try
+        {
+            _mikrotikApi = new MikroTikApiService(_mikrotikHost, _mikrotikUser, _mikrotikPassword);
+            var error = await _mikrotikApi.TestConnectionAsync();
+
+            if (error == null)
+            {
+                // Проверяем/создаём правило firewall
+                var fwError = await _mikrotikApi.EnsureFirewallRuleAsync();
+                if (fwError != null)
+                {
+                    OnError($"⚠️ MikroTik API: правило не создано: {fwError}");
+                }
+
+                MikrotikConnected = true;
+                OnError($"✅ MikroTik API: подключено к {_mikrotikHost}");
+            }
+            else
+            {
+                MikrotikConnected = false;
+                OnError($"❌ MikroTik API: {error}");
+            }
+        }
+        catch (Exception ex)
+        {
+            MikrotikConnected = false;
+            OnError($"❌ MikroTik API: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Блокировка выбранного IP на MikroTik через address-list
+    /// </summary>
+    public async Task BlockIp(string? ip)
+        {
+            if (string.IsNullOrEmpty(ip) || _mikrotikApi == null)
+            {
+                OnError("⚠️ Сначала подключись к MikroTik");
+                return;
+            }
+
+            await Application.Current.Dispatcher.Invoke(async () =>
+            {
+                var error = await _mikrotikApi.BlockIpAsync(ip, $"DPI-Home auto-block {DateTime.Now:yyyy-MM-dd HH:mm}");
+            if (error == null)
+            {
+                var alert = new Alert
+                {
+                    Timestamp = DateTime.Now,
+                    Level = ThreatLevel.High,
+                    Category = "MikroTik",
+                    Title = "IP заблокирован на MikroTik",
+                    Description = $"IP {ip} добавлен в address-list DPI-Home-Blocked на 24ч",
+                    SrcIp = ip,
+                    Score = 0
+                };
+                _aggregator.Add(alert);
+            }
+            else
+            {
+                OnError($"❌ Блокировка IP {ip}: {error}");
+            }
+        });
+    }
+
     private void OnPacketReceived(RawPacket packet)
     {
         Interlocked.Increment(ref _packetCounter);
@@ -184,7 +290,6 @@ public class MainViewModel : INotifyPropertyChanged
         {
             lock (_httpsLock)
             {
-                // Показываем только активные группы (есть установленные или SYN-соединения)
                 bool isActive = group.EstablishedCount > 0 || group.SynSentCount > 0;
 
                 var existing = HttpsServerGroups.FirstOrDefault(g => g.DstIp == group.DstIp);
@@ -197,7 +302,6 @@ public class MainViewModel : INotifyPropertyChanged
                     }
                     else
                     {
-                        // Группа больше не активна — убираем из списка
                         HttpsServerGroups.Remove(existing);
                     }
                 }
@@ -242,15 +346,15 @@ public class MainViewModel : INotifyPropertyChanged
         Stats = new TrafficStats
         {
             TotalPackets = Interlocked.Read(ref _packetCounter),
-            AlertsToday = AlertGroups.Sum(g => (int)g.TotalCount),
-            AlertsCritical = AlertGroups.Count(g => g.Level == ThreatLevel.Critical),
-            AlertsHigh = AlertGroups.Count(g => g.Level == ThreatLevel.High),
-            AlertsMedium = AlertGroups.Count(g => g.Level == ThreatLevel.Medium),
+            AlertsToday = (int)AlertGroups.Sum(g => g.TotalCount),
+            AlertsCritical = AlertGroups.Count(g => g.MaxLevel == ThreatLevel.Critical),
+            AlertsHigh = AlertGroups.Count(g => g.MaxLevel == ThreatLevel.High),
+            AlertsMedium = AlertGroups.Count(g => g.MaxLevel == ThreatLevel.Medium),
         };
 
         HttpsServerCount = HttpsServerGroups.Count;
         HttpsEstablishedCount = HttpsServerGroups.Sum(g => g.EstablishedCount);
-        HttpsSynFloodCount = AlertGroups.Count(g => g.Category == "SYN Flood");
+        HttpsSynFloodCount = AlertGroups.Sum(g => g.Categories.ContainsKey("SYN Flood") ? g.Categories["SYN Flood"].Count : 0);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

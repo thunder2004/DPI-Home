@@ -1,25 +1,19 @@
 namespace DPI_Home.Models;
 
 /// <summary>
-/// Агрегированный алерт — группа однотипных событий
+/// Агрегированный алерт — все события от одного IP
 /// </summary>
 public class AlertGroup
 {
-    public string GroupKey { get; set; } = string.Empty;  // category + srcIp + dstPort
-    public string Category { get; set; } = string.Empty;
-    public string Title { get; set; } = string.Empty;
-    public string Description { get; set; } = string.Empty;
+    public string GroupKey { get; set; } = string.Empty;  // srcIp
     public string SrcIp { get; set; } = string.Empty;
-    public string DstIp { get; set; } = string.Empty;
-    public int DstPort { get; set; }
-    public string Protocol { get; set; } = string.Empty;
-    public ThreatLevel Level { get; set; } = ThreatLevel.Medium;
+    public ThreatLevel MaxLevel { get; set; } = ThreatLevel.Info;
     public DateTime FirstSeen { get; set; }
     public DateTime LastSeen { get; set; }
     public long TotalCount { get; set; }
-    public double MaxScore { get; set; }
+    public Dictionary<string, ThreatInfo> Categories { get; set; } = new();
 
-    public string LevelIcon => Level switch
+    public string LevelIcon => MaxLevel switch
     {
         ThreatLevel.Info => "ℹ️",
         ThreatLevel.Low => "⚠️",
@@ -29,7 +23,7 @@ public class AlertGroup
         _ => "❓"
     };
 
-    public string LevelColor => Level switch
+    public string LevelColor => MaxLevel switch
     {
         ThreatLevel.Info => "#4FC3F7",
         ThreatLevel.Low => "#FFB74D",
@@ -49,6 +43,22 @@ public class AlertGroup
         }
     }
 
+    public string Summary
+    {
+        get
+        {
+            var parts = Categories
+                .OrderByDescending(c => c.Value.Count)
+                .Select(c => $"{c.Value.Icon}{c.Key} x{c.Value.Count}")
+                .Take(3);
+            var joined = string.Join(" | ", parts);
+            var total = Categories.Values.Sum(c => c.Count);
+            if (total > 0)
+                joined = $"📦 {total:N0} событий\n" + joined;
+            return joined;
+        }
+    }
+
     public string CountLabel => TotalCount switch
     {
         1 => "1 раз",
@@ -56,4 +66,10 @@ public class AlertGroup
         <= 100 => $"{TotalCount} раз",
         _ => $"{TotalCount:N0} раз"
     };
+}
+
+public class ThreatInfo
+{
+    public string Icon { get; set; } = "❓";
+    public int Count { get; set; }
 }

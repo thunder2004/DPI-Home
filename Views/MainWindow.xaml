@@ -81,23 +81,50 @@
                     </Border>
 
                     <Button Command="{Binding StartCommand}" Width="140" Height="36"
-                            materialDesign:ButtonAssist.CornerRadius="8"
-                            FontWeight="SemiBold" FontSize="13">
-                        <Button.Style>
-                            <Style TargetType="Button" BasedOn="{StaticResource MaterialDesignRaisedButton}">
-                                <Setter Property="Background" Value="#4CAF50"/>
-                                <Setter Property="Foreground" Value="White"/>
-                                <Setter Property="Content" Value="▶ Старт"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsConnected}" Value="True">
-                                        <Setter Property="Background" Value="#F44336"/>
-                                        <Setter Property="Content" Value="■ Стоп"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Button.Style>
-                    </Button>
-                </StackPanel>
+                                                materialDesign:ButtonAssist.CornerRadius="8"
+                                                FontWeight="SemiBold" FontSize="13">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource MaterialDesignRaisedButton}">
+                                                    <Setter Property="Background" Value="#4CAF50"/>
+                                                    <Setter Property="Foreground" Value="White"/>
+                                                    <Setter Property="Content" Value="▶ Старт"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsConnected}" Value="True">
+                                                            <Setter Property="Background" Value="#F44336"/>
+                                                            <Setter Property="Content" Value="■ Стоп"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                        </Button>
+
+                                        <!-- Separator -->
+                                        <Rectangle Width="1" Fill="#2A2A4A" Margin="12,0"/>
+
+                                        <!-- MikroTik API -->
+                                        <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="12,0,0,0">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="MikroTik:" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                                <TextBox Text="{Binding MikrotikHost}" Width="90" FontSize="12"
+                                                         Background="#0D1B2A" Foreground="White" BorderThickness="0"
+                                                         materialDesign:HintAssist.Hint="IP"/>
+                                                <TextBlock Text=":" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="2,0"/>
+                                                <TextBox Text="{Binding MikrotikUser}" Width="50" FontSize="12"
+                                                         Background="#0D1B2A" Foreground="White" BorderThickness="0"
+                                                         materialDesign:HintAssist.Hint="user" Margin="2,0"/>
+                                                <TextBox x:Name="MikrotikPasswordBox" Width="70" FontSize="12"
+                                                                                                         Background="#0D1B2A" Foreground="White" BorderThickness="0"
+                                                                                                         materialDesign:HintAssist.Hint="pass" Margin="2,0"
+                                                                                                         Text="{Binding MikrotikPassword}"/>
+                                                <Button Command="{Binding ConnectMikrotikCommand}" 
+                                                        Content="🔗" Width="32" Height="24" FontSize="14"
+                                                        Background="#37474F" Foreground="White"
+                                                        materialDesign:ButtonAssist.CornerRadius="4"
+                                                        Margin="4,0,0,0" Cursor="Hand"
+                                                        ToolTip="Подключиться к MikroTik API"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
             </Grid>
         </Border>
 
@@ -248,27 +275,29 @@
                                                        VerticalAlignment="Top" Margin="0,2,0,0"/>
 
                                             <StackPanel Grid.Column="1" Margin="8,0">
-                                                <StackPanel Orientation="Horizontal">
-                                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="14" Foreground="White"/>
-                                                    <Border Background="{Binding LevelColor}" CornerRadius="4" Padding="6,1" Margin="8,0,0,0">
-                                                        <TextBlock Text="{Binding Level}" FontSize="10" FontWeight="Bold" Foreground="White"/>
-                                                    </Border>
-                                                    <Border Background="#37474F" CornerRadius="4" Padding="6,1" Margin="4,0,0,0">
-                                                        <TextBlock Text="{Binding CountLabel}" FontSize="10" Foreground="#B0BEC5"/>
-                                                    </Border>
-                                                </StackPanel>
-                                                <TextBlock Text="{Binding Description}" FontSize="12" Foreground="#B0BEC5" 
-                                                           Margin="0,4,0,0" TextWrapping="Wrap"/>
-                                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                                    <TextBlock Text="{Binding SrcIp, StringFormat='📤 {0}'}" FontSize="11" Foreground="#78909C" Margin="0,0,16,0"/>
-                                                    <TextBlock Text="{Binding DstIp, StringFormat='📥 {0}'}" FontSize="11" Foreground="#78909C" Margin="0,0,16,0"/>
-                                                    <TextBlock Text="{Binding Protocol}" FontSize="11" Foreground="#78909C"/>
-                                                </StackPanel>
-                                            </StackPanel>
+                                                                                            <StackPanel Orientation="Horizontal">
+                                                                                                <TextBlock Text="{Binding SrcIp}" FontWeight="SemiBold" FontSize="14" Foreground="White"/>
+                                                                                                <Border Background="{Binding LevelColor}" CornerRadius="4" Padding="6,1" Margin="8,0,0,0">
+                                                                                                    <TextBlock Text="{Binding MaxLevel}" FontSize="10" FontWeight="Bold" Foreground="White"/>
+                                                                                                </Border>
+                                                                                                <Border Background="#37474F" CornerRadius="4" Padding="6,1" Margin="4,0,0,0">
+                                                                                                    <TextBlock Text="{Binding CountLabel}" FontSize="10" Foreground="#B0BEC5"/>
+                                                                                                </Border>
+                                                                                            </StackPanel>
+                                                                                            <TextBlock Text="{Binding Summary}" FontSize="12" Foreground="#B0BEC5" 
+                                                                                                       Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                                                                        </StackPanel>
 
-                                            <StackPanel Grid.Column="2" VerticalAlignment="Top">
-                                                <TextBlock Text="{Binding TimeRange}" FontSize="10" Foreground="#546E7A" TextAlignment="Right"/>
-                                            </StackPanel>
+                                            <StackPanel Grid.Column="2" VerticalAlignment="Top" HorizontalAlignment="Right">
+                                                                                            <TextBlock Text="{Binding TimeRange}" FontSize="10" Foreground="#546E7A" TextAlignment="Right"/>
+                                                                                            <Button Command="{Binding DataContext.BlockIpCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                                                    CommandParameter="{Binding SrcIp}"
+                                                                                                    Content="🚫" Width="28" Height="24" FontSize="12"
+                                                                                                    Background="#37474F" Foreground="#FF5722"
+                                                                                                    BorderThickness="0" Cursor="Hand" Margin="0,4,0,0"
+                                                                                                    materialDesign:ButtonAssist.CornerRadius="4"
+                                                                                                    ToolTip="Заблокировать этот IP на MikroTik"/>
+                                                                                        </StackPanel>
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
