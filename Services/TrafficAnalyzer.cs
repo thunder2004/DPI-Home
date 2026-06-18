@@ -49,6 +49,7 @@ public class TrafficAnalyzer
                     Level = sig.Level,
                     Category = sig.Category,
                     Title = sig.Name,
+                    ShortName = sig.Name,
                     Description = sig.Description,
                     SrcIp = packet.SrcIp,
                     DstIp = packet.DstIp,
@@ -83,6 +84,7 @@ public class TrafficAnalyzer
                     Level = ThreatLevel.High,
                     Category = "Port Scan",
                     Title = "Обнаружен порт-скан",
+                    ShortName = "Port Scan",
                     Description = $"IP {packet.SrcIp} сканирует порты: {state.UniquePortsInWindow(WindowSeconds)} уникальных портов за {WindowSeconds}с",
                     SrcIp = packet.SrcIp,
                     DstIp = packet.DstIp,
@@ -113,6 +115,7 @@ public class TrafficAnalyzer
                     Level = ThreatLevel.Critical,
                     Category = "Brute Force",
                     Title = $"Brute-force атака на порт {packet.DstPort}",
+                    ShortName = $"BruteForce:{packet.DstPort}",
                     Description = $"IP {packet.SrcIp} — {state.AttemptsInWindow(WindowSeconds)} попыток за {WindowSeconds}с на порт {packet.DstPort}",
                     SrcIp = packet.SrcIp,
                     DstIp = packet.DstIp,
@@ -145,6 +148,7 @@ public class TrafficAnalyzer
                     Level = ThreatLevel.Critical,
                     Category = "SYN Flood",
                     Title = $"SYN Flood атака на порт 443 с {packet.SrcIp}",
+                    ShortName = $"SYN Flood",
                     Description = $"IP {packet.SrcIp} — {state.AttemptsInWindow(WindowSeconds)} SYN-пакетов за {WindowSeconds}с на порт 443",
                     SrcIp = packet.SrcIp,
                     DstIp = packet.DstIp,
@@ -234,7 +238,6 @@ public class TrafficAnalyzer
             }
         }
 
-        // Cleanup old closed connections
         if (_httpsConnections.Count > 5000)
         {
             var cutoff = DateTime.UtcNow.AddMinutes(-5);

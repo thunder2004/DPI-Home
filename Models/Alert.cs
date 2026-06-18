@@ -29,6 +29,7 @@ public class Alert
     public string Protocol { get; set; } = string.Empty;
     public long PacketCount { get; set; }
     public double Score { get; set; }
+    public string ShortName { get; set; } = string.Empty;
 
     public string LevelIcon => Level switch
     {
