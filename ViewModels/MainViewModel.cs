@@ -184,13 +184,24 @@ public class MainViewModel : INotifyPropertyChanged
         {
             lock (_httpsLock)
             {
+                // Показываем только активные группы (есть установленные или SYN-соединения)
+                bool isActive = group.EstablishedCount > 0 || group.SynSentCount > 0;
+
                 var existing = HttpsServerGroups.FirstOrDefault(g => g.DstIp == group.DstIp);
                 if (existing != null)
                 {
-                    var idx = HttpsServerGroups.IndexOf(existing);
-                    HttpsServerGroups[idx] = group;
+                    if (isActive)
+                    {
+                        var idx = HttpsServerGroups.IndexOf(existing);
+                        HttpsServerGroups[idx] = group;
+                    }
+                    else
+                    {
+                        // Группа больше не активна — убираем из списка
+                        HttpsServerGroups.Remove(existing);
+                    }
                 }
-                else
+                else if (isActive)
                 {
                     HttpsServerGroups.Insert(0, group);
                 }
