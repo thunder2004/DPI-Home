@@ -26,6 +26,8 @@ public class TrafficAnalyzer
     private readonly ConcurrentDictionary<string, BruteForceState> _bruteForce = new();
     private readonly ConcurrentDictionary<string, SynFloodState> _synFloods = new();
     private readonly ConcurrentDictionary<string, HttpsConnection> _httpsConnections = new();
+    private readonly ConcurrentDictionary<string, HttpsServerGroup> _httpsServerGroups = new();
+    private readonly object _httpsGroupLock = new();
 
     private const int PortScanThreshold = 20;    // уникальных портов за 10 сек
     private const int BruteForceThreshold = 10;   // попыток за 10 сек
@@ -34,6 +36,7 @@ public class TrafficAnalyzer
 
     public event Action<Alert>? OnAlert;
     public event Action<HttpsConnection>? OnHttpsConnectionUpdate;
+    public event Action<HttpsServerGroup>? OnHttpsServerGroupUpdate;
 
     public IReadOnlyCollection<HttpsConnection> HttpsConnections => 
         _httpsConnections.Values.ToList().AsReadOnly();
@@ -236,6 +239,7 @@ public class TrafficAnalyzer
             conn.PacketCount++;
             conn.BytesTransferred += packet.PacketLength;
             OnHttpsConnectionUpdate?.Invoke(conn);
+            UpdateHttpsServerGroup(serverIp, conn);
         }
         else if (isSyn && isAck)
         {
@@ -246,6 +250,7 @@ public class TrafficAnalyzer
                 conn.PacketCount++;
                 conn.BytesTransferred += packet.PacketLength;
                 OnHttpsConnectionUpdate?.Invoke(conn);
+                UpdateHttpsServerGroup(serverIp, conn);
             }
         }
         else if (isRst || isFin)
@@ -257,6 +262,7 @@ public class TrafficAnalyzer
                 conn.PacketCount++;
                 conn.BytesTransferred += packet.PacketLength;
                 OnHttpsConnectionUpdate?.Invoke(conn);
+                UpdateHttpsServerGroup(serverIp, conn);
             }
         }
         else
@@ -266,6 +272,7 @@ public class TrafficAnalyzer
             {
                 conn.PacketCount++;
                 conn.BytesTransferred += packet.PacketLength;
+                UpdateHttpsServerGroup(serverIp, conn);
             }
         }
 
@@ -283,6 +290,37 @@ public class TrafficAnalyzer
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Обновление агрегированной группы HTTPS-соединений к одному серверу
+    /// </summary>
+    private void UpdateHttpsServerGroup(string serverIp, HttpsConnection conn)
+    {
+        var group = _httpsServerGroups.GetOrAdd(serverIp, _ => new HttpsServerGroup
+        {
+            DstIp = serverIp,
+            FirstSeen = DateTime.Now
+        });
+
+        lock (_httpsGroupLock)
+        {
+            group.LastSeen = DateTime.Now;
+            group.TotalPackets += conn.PacketCount;
+            group.TotalBytes += conn.BytesTransferred;
+
+            // Пересчитываем статистику по всем соединениям к этому серверу
+            var connectionsToServer = _httpsConnections.Values
+                .Where(c => c.DstIp == serverIp || c.SrcIp == serverIp)
+                .ToList();
+
+            group.TotalConnections = connectionsToServer.Count;
+            group.EstablishedCount = connectionsToServer.Count(c => c.State == ConnectionState.Established);
+            group.SynSentCount = connectionsToServer.Count(c => c.State == ConnectionState.SynSent);
+            group.ClosedCount = connectionsToServer.Count(c => c.State == ConnectionState.Closed);
+        }
+
+        OnHttpsServerGroupUpdate?.Invoke(group);
     }
 
     private void EmitAlert(Alert alert)
