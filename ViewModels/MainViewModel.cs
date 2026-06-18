@@ -14,8 +14,8 @@ public class MainViewModel : INotifyPropertyChanged
 {
     private MikroTikSnifferService _sniffer;
     private readonly TrafficAnalyzer _analyzer;
+    private readonly AlertAggregator _aggregator;
     private readonly DispatcherTimer _statsTimer;
-    private readonly object _alertLock = new();
     private readonly object _httpsLock = new();
 
     private TrafficStats _stats = new();
@@ -28,7 +28,7 @@ public class MainViewModel : INotifyPropertyChanged
     private int _httpsEstablishedCount;
     private int _httpsSynFloodCount;
 
-    public ObservableCollection<Alert> Alerts { get; } = new();
+    public ObservableCollection<AlertGroup> AlertGroups { get; } = new();
     public ObservableCollection<HttpsConnection> HttpsConnections { get; } = new();
 
     public TrafficStats Stats
@@ -97,8 +97,10 @@ public class MainViewModel : INotifyPropertyChanged
 
         _sniffer = CreateSniffer();
         _analyzer = new TrafficAnalyzer();
+        _aggregator = new AlertAggregator();
 
         _analyzer.OnAlert += OnAlert;
+        _aggregator.OnAlertGroup += OnAlertGroup;
         _analyzer.OnHttpsConnectionUpdate += OnHttpsConnectionUpdate;
 
         _statsTimer = new DispatcherTimer
@@ -140,7 +142,8 @@ public class MainViewModel : INotifyPropertyChanged
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
-            Alerts.Clear();
+            _aggregator.FlushAll();
+            AlertGroups.Clear();
         });
     }
 
@@ -152,14 +155,29 @@ public class MainViewModel : INotifyPropertyChanged
 
     private void OnAlert(Alert alert)
     {
+        // Отдаём алерт агрегатору — он сам решит, когда отправить группу
+        _aggregator.Add(alert);
+    }
+
+    private void OnAlertGroup(AlertGroup group)
+    {
         Application.Current.Dispatcher.Invoke(() =>
         {
-            lock (_alertLock)
+            // Ищем существующую группу с таким же ключом
+            var existing = AlertGroups.FirstOrDefault(g => g.GroupKey == group.GroupKey);
+            if (existing != null)
             {
-                Alerts.Insert(0, alert);
-
-                if (Alerts.Count > 1000) Alerts.RemoveAt(Alerts.Count - 1);
+                var idx = AlertGroups.IndexOf(existing);
+                AlertGroups[idx] = group;
             }
+            else
+            {
+                AlertGroups.Insert(0, group);
+            }
+
+            // Ограничим список
+            while (AlertGroups.Count > 200)
+                AlertGroups.RemoveAt(AlertGroups.Count - 1);
         });
     }
 
@@ -193,7 +211,8 @@ public class MainViewModel : INotifyPropertyChanged
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
-            OnAlert(new Alert
+            // Системные сообщения отправляем напрямую, без агрегации
+            var alert = new Alert
             {
                 Timestamp = DateTime.Now,
                 Level = ThreatLevel.High,
@@ -201,7 +220,8 @@ public class MainViewModel : INotifyPropertyChanged
                 Title = "Система",
                 Description = error,
                 Score = 0
-            });
+            };
+            _aggregator.Add(alert);
         });
     }
 
@@ -218,15 +238,15 @@ public class MainViewModel : INotifyPropertyChanged
         Stats = new TrafficStats
         {
             TotalPackets = Interlocked.Read(ref _packetCounter),
-            AlertsToday = Alerts.Count,
-            AlertsCritical = Alerts.Count(a => a.Level == ThreatLevel.Critical),
-            AlertsHigh = Alerts.Count(a => a.Level == ThreatLevel.High),
-            AlertsMedium = Alerts.Count(a => a.Level == ThreatLevel.Medium),
+            AlertsToday = AlertGroups.Sum(g => (int)g.TotalCount),
+            AlertsCritical = AlertGroups.Count(g => g.Level == ThreatLevel.Critical),
+            AlertsHigh = AlertGroups.Count(g => g.Level == ThreatLevel.High),
+            AlertsMedium = AlertGroups.Count(g => g.Level == ThreatLevel.Medium),
         };
 
         HttpsConnectionCount = HttpsConnections.Count;
         HttpsEstablishedCount = HttpsConnections.Count(c => c.State == ConnectionState.Established);
-        HttpsSynFloodCount = Alerts.Count(a => a.Category == "SYN Flood");
+        HttpsSynFloodCount = AlertGroups.Count(g => g.Category == "SYN Flood");
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
