@@ -16,6 +16,9 @@ public class MikroTikSnifferService : IDisposable
     private CancellationTokenSource? _cts;
     private Task? _readTask;
 
+    // MikroTik Packet Sniffer streaming добавляет 5 байт служебного заголовка перед Ethernet-кадром
+    private const int MikroTikStreamHeader = 5;
+
     public event Action<RawPacket>? OnPacketReceived;
     public event Action<string>? OnError;
     public event Action<bool>? OnConnectionChanged;
@@ -51,8 +54,6 @@ public class MikroTikSnifferService : IDisposable
 
     private async Task ReadLoopAsync(CancellationToken ct)
     {
-        var remoteEndPoint = new IPEndPoint(IPAddress.Any, 0);
-
         while (!ct.IsCancellationRequested && _udpClient != null)
         {
             try
@@ -60,17 +61,21 @@ public class MikroTikSnifferService : IDisposable
                 var result = await _udpClient.ReceiveAsync(ct);
                 var data = result.Buffer;
 
-                // При первом пакете логируем первые 64 байта для диагностики
-                                if (!IsConnected)
-                                {
-                                    var hex = BitConverter.ToString(data, 0, Math.Min(64, data.Length));
-                                    // Пишем в файл, чтобы не терялось в агрегаторе
-                                    try { File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "packet_dump.txt"), 
-                                        $"Первый пакет ({data.Length} байт):\n{hex}"); } catch { }
-                                    OnError?.Invoke($"🔗 Первый пакет ({data.Length} байт) — дамп сохранён в packet_dump.txt");
-                                    IsConnected = true;
-                                    OnConnectionChanged?.Invoke(true);
-                                }
+                // При первом пакете сохраняем дамп
+                if (!IsConnected)
+                {
+                    var hex = BitConverter.ToString(data, 0, Math.Min(64, data.Length));
+                    try
+                    {
+                        File.WriteAllText(
+                            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "packet_dump.txt"),
+                            $"Первый пакет ({data.Length} байт):\n{hex}");
+                    }
+                    catch { }
+                    OnError?.Invoke($"🔗 Первый пакет ({data.Length} байт) — дамп сохранён в packet_dump.txt");
+                    IsConnected = true;
+                    OnConnectionChanged?.Invoke(true);
+                }
 
                 var packet = ParsePacket(data, data.Length);
                 if (packet != null)
@@ -99,7 +104,7 @@ public class MikroTikSnifferService : IDisposable
 
     private static RawPacket? ParsePacket(byte[] data, int length)
     {
-        if (length < 14) return null; // minimum ethernet frame
+        if (length < 14 + MikroTikStreamHeader) return null;
 
         try
         {
@@ -111,17 +116,22 @@ public class MikroTikSnifferService : IDisposable
                 PayloadHex = Convert.ToHexString(data, 0, Math.Min(length, 64))
             };
 
-            // Parse Ethernet header
-            packet.SrcMac = BitConverter.ToString(data, 6, 6).Replace('-', ':');
-            packet.DstMac = BitConverter.ToString(data, 0, 6).Replace('-', ':');
+            // Пропускаем 5 байт служебного заголовка MikroTik
+            int off = MikroTikStreamHeader;
 
-            int ipOffset = 14;
+            // Parse Ethernet header
+            packet.DstMac = BitConverter.ToString(data, off + 0, 6).Replace('-', ':');
+            packet.SrcMac = BitConverter.ToString(data, off + 6, 6).Replace('-', ':');
+
+            // Начало IP-заголовка
+            int ipOffset = off + 14;
             if (length <= ipOffset) return packet;
 
             // Parse IP header
             int versionHeaderLen = data[ipOffset];
             int headerLen = (versionHeaderLen & 0x0F) * 4;
 
+            // IP-адреса — байты 12-15 (src) и 16-19 (dst) от начала IP-заголовка
             packet.SrcIp = new IPAddress(data[(ipOffset + 12)..(ipOffset + 16)]).ToString();
             packet.DstIp = new IPAddress(data[(ipOffset + 16)..(ipOffset + 20)]).ToString();
 
