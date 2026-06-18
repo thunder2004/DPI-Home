@@ -229,9 +229,9 @@
                     </Grid>
 
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                        <ItemsControl ItemsSource="{Binding Alerts}">
+                        <ItemsControl ItemsSource="{Binding AlertGroups}">
                             <ItemsControl.ItemTemplate>
-                                <DataTemplate DataType="{x:Type models:Alert}">
+                                <DataTemplate DataType="{x:Type models:AlertGroup}">
                                     <Border Style="{StaticResource AlertCardStyle}"
                                             BorderBrush="{Binding LevelColor}">
                                         <Border.Background>
@@ -253,6 +253,9 @@
                                                     <Border Background="{Binding LevelColor}" CornerRadius="4" Padding="6,1" Margin="8,0,0,0">
                                                         <TextBlock Text="{Binding Level}" FontSize="10" FontWeight="Bold" Foreground="White"/>
                                                     </Border>
+                                                    <Border Background="#37474F" CornerRadius="4" Padding="6,1" Margin="4,0,0,0">
+                                                        <TextBlock Text="{Binding CountLabel}" FontSize="10" Foreground="#B0BEC5"/>
+                                                    </Border>
                                                 </StackPanel>
                                                 <TextBlock Text="{Binding Description}" FontSize="12" Foreground="#B0BEC5" 
                                                            Margin="0,4,0,0" TextWrapping="Wrap"/>
@@ -263,8 +266,9 @@
                                                 </StackPanel>
                                             </StackPanel>
 
-                                            <TextBlock Grid.Column="2" Text="{Binding Timestamp, StringFormat='HH:mm:ss'}" 
-                                                       FontSize="11" Foreground="#546E7A" VerticalAlignment="Top"/>
+                                            <StackPanel Grid.Column="2" VerticalAlignment="Top">
+                                                <TextBlock Text="{Binding TimeRange}" FontSize="10" Foreground="#546E7A" TextAlignment="Right"/>
+                                            </StackPanel>
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
