@@ -24,12 +24,12 @@ public class MainViewModel : INotifyPropertyChanged
     private string _statusColor = "#FF9800";
     private int _listenPort = 37008;
     private long _packetCounter;
-    private int _httpsConnectionCount;
+    private int _httpsServerCount;
     private int _httpsEstablishedCount;
     private int _httpsSynFloodCount;
 
     public ObservableCollection<AlertGroup> AlertGroups { get; } = new();
-    public ObservableCollection<HttpsConnection> HttpsConnections { get; } = new();
+    public ObservableCollection<HttpsServerGroup> HttpsServerGroups { get; } = new();
 
     public TrafficStats Stats
     {
@@ -67,10 +67,10 @@ public class MainViewModel : INotifyPropertyChanged
         set { _listenPort = value; OnPropertyChanged(); }
     }
 
-    public int HttpsConnectionCount
+    public int HttpsServerCount
     {
-        get => _httpsConnectionCount;
-        set { _httpsConnectionCount = value; OnPropertyChanged(); }
+        get => _httpsServerCount;
+        set { _httpsServerCount = value; OnPropertyChanged(); }
     }
 
     public int HttpsEstablishedCount
@@ -101,7 +101,7 @@ public class MainViewModel : INotifyPropertyChanged
 
         _analyzer.OnAlert += OnAlert;
         _aggregator.OnAlertGroup += OnAlertGroup;
-        _analyzer.OnHttpsConnectionUpdate += OnHttpsConnectionUpdate;
+        _analyzer.OnHttpsServerGroupUpdate += OnHttpsServerGroupUpdate;
 
         _statsTimer = new DispatcherTimer
         {
@@ -155,7 +155,6 @@ public class MainViewModel : INotifyPropertyChanged
 
     private void OnAlert(Alert alert)
     {
-        // Отдаём алерт агрегатору — он сам решит, когда отправить группу
         _aggregator.Add(alert);
     }
 
@@ -163,7 +162,6 @@ public class MainViewModel : INotifyPropertyChanged
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
-            // Ищем существующую группу с таким же ключом
             var existing = AlertGroups.FirstOrDefault(g => g.GroupKey == group.GroupKey);
             if (existing != null)
             {
@@ -175,34 +173,30 @@ public class MainViewModel : INotifyPropertyChanged
                 AlertGroups.Insert(0, group);
             }
 
-            // Ограничим список
             while (AlertGroups.Count > 200)
                 AlertGroups.RemoveAt(AlertGroups.Count - 1);
         });
     }
 
-    private void OnHttpsConnectionUpdate(HttpsConnection conn)
+    private void OnHttpsServerGroupUpdate(HttpsServerGroup group)
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
             lock (_httpsLock)
             {
-                var existing = HttpsConnections.FirstOrDefault(c =>
-                    c.SrcIp == conn.SrcIp && c.SrcPort == conn.SrcPort &&
-                    c.DstIp == conn.DstIp && c.DstPort == conn.DstPort);
-
+                var existing = HttpsServerGroups.FirstOrDefault(g => g.DstIp == group.DstIp);
                 if (existing != null)
                 {
-                    var idx = HttpsConnections.IndexOf(existing);
-                    HttpsConnections[idx] = conn;
+                    var idx = HttpsServerGroups.IndexOf(existing);
+                    HttpsServerGroups[idx] = group;
                 }
                 else
                 {
-                    HttpsConnections.Insert(0, conn);
+                    HttpsServerGroups.Insert(0, group);
                 }
 
-                while (HttpsConnections.Count > 500)
-                    HttpsConnections.RemoveAt(HttpsConnections.Count - 1);
+                while (HttpsServerGroups.Count > 200)
+                    HttpsServerGroups.RemoveAt(HttpsServerGroups.Count - 1);
             }
         });
     }
@@ -211,7 +205,6 @@ public class MainViewModel : INotifyPropertyChanged
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
-            // Системные сообщения отправляем напрямую, без агрегации
             var alert = new Alert
             {
                 Timestamp = DateTime.Now,
@@ -244,8 +237,8 @@ public class MainViewModel : INotifyPropertyChanged
             AlertsMedium = AlertGroups.Count(g => g.Level == ThreatLevel.Medium),
         };
 
-        HttpsConnectionCount = HttpsConnections.Count;
-        HttpsEstablishedCount = HttpsConnections.Count(c => c.State == ConnectionState.Established);
+        HttpsServerCount = HttpsServerGroups.Count;
+        HttpsEstablishedCount = HttpsServerGroups.Sum(g => g.EstablishedCount);
         HttpsSynFloodCount = AlertGroups.Count(g => g.Category == "SYN Flood");
     }
 
