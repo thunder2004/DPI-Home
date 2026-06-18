@@ -8,7 +8,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>DPI_Home</RootNamespace>
     <AssemblyName>DPI-Home</AssemblyName>
-    <ApplicationIcon>Resources\app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

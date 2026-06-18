@@ -126,7 +126,7 @@
                 <Border Grid.Column="0" Style="{StaticResource StatCardStyle}" Margin="0,0,6,0">
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="📦" FontSize="20" HorizontalAlignment="Center"/>
-                        <TextBlock Text="{Binding Stats.TotalPackets, StringFormat='{0:N0}'}" 
+                        <TextBlock Text="{Binding Stats.TotalPackets, StringFormat={}{0:N0}}" 
                                    FontSize="22" FontWeight="Bold" Foreground="#64B5F6" HorizontalAlignment="Center"/>
                         <TextBlock Text="Пакетов" FontSize="11" Foreground="#78909C" HorizontalAlignment="Center"/>
                     </StackPanel>
