@@ -59,9 +59,11 @@ public class MikroTikSnifferService : IDisposable
                 var result = await _udpClient.ReceiveAsync(ct);
                 var data = result.Buffer;
 
-                // При первом пакете отмечаем, что MikroTik начал слать
+                // При первом пакете логируем первые 64 байта для диагностики
                 if (!IsConnected)
                 {
+                    var hex = BitConverter.ToString(data, 0, Math.Min(64, data.Length));
+                    OnError?.Invoke($"🔗 Первый пакет ({data.Length} байт): {hex}");
                     IsConnected = true;
                     OnError?.Invoke($"🔗 Получен первый пакет от {result.RemoteEndPoint}");
                     OnConnectionChanged?.Invoke(true);
