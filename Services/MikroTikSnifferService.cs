@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.IO;
 using DPI_Home.Models;
 
 namespace DPI_Home.Services;
@@ -60,14 +61,16 @@ public class MikroTikSnifferService : IDisposable
                 var data = result.Buffer;
 
                 // При первом пакете логируем первые 64 байта для диагностики
-                if (!IsConnected)
-                {
-                    var hex = BitConverter.ToString(data, 0, Math.Min(64, data.Length));
-                    OnError?.Invoke($"🔗 Первый пакет ({data.Length} байт): {hex}");
-                    IsConnected = true;
-                    OnError?.Invoke($"🔗 Получен первый пакет от {result.RemoteEndPoint}");
-                    OnConnectionChanged?.Invoke(true);
-                }
+                                if (!IsConnected)
+                                {
+                                    var hex = BitConverter.ToString(data, 0, Math.Min(64, data.Length));
+                                    // Пишем в файл, чтобы не терялось в агрегаторе
+                                    try { File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "packet_dump.txt"), 
+                                        $"Первый пакет ({data.Length} байт):\n{hex}"); } catch { }
+                                    OnError?.Invoke($"🔗 Первый пакет ({data.Length} байт) — дамп сохранён в packet_dump.txt");
+                                    IsConnected = true;
+                                    OnConnectionChanged?.Invoke(true);
+                                }
 
                 var packet = ParsePacket(data, data.Length);
                 if (packet != null)
