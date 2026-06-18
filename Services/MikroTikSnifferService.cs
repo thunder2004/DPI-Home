@@ -1,33 +1,28 @@
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
 using DPI_Home.Models;
 
 namespace DPI_Home.Services;
 
 /// <summary>
-/// Сервис захвата трафика с MikroTik через Packet Sniffer (TCP server mode)
-/// MikroTik сам подключается к нам на listenPort
+/// Сервис захвата трафика с MikroTik через Packet Sniffer (UDP streaming)
+/// MikroTik просто шлёт UDP-датаграммы на наш IP:port
 /// </summary>
 public class MikroTikSnifferService : IDisposable
 {
     private readonly int _listenPort;
-    private TcpListener? _listener;
-    private TcpClient? _client;
-    private NetworkStream? _stream;
+    private UdpClient? _udpClient;
     private CancellationTokenSource? _cts;
-    private Task? _acceptTask;
     private Task? _readTask;
 
     public event Action<RawPacket>? OnPacketReceived;
     public event Action<string>? OnError;
     public event Action<bool>? OnConnectionChanged;
 
-    public bool IsConnected => _client?.Connected ?? false;
-    public string ListenAddress { get; private set; } = "0.0.0.0";
+    public bool IsConnected { get; private set; }
     public int ListenPort => _listenPort;
 
-    public MikroTikSnifferService(int listenPort = 2000)
+    public MikroTikSnifferService(int listenPort = 37008)
     {
         _listenPort = listenPort;
     }
@@ -40,39 +35,50 @@ public class MikroTikSnifferService : IDisposable
 
         try
         {
-            _listener = new TcpListener(IPAddress.Any, _listenPort);
-            _listener.Start();
+            _udpClient = new UdpClient(_listenPort);
+            OnError?.Invoke($"✅ UDP сервер запущен на порту {_listenPort}, ожидаю пакеты от MikroTik...");
             OnConnectionChanged?.Invoke(false);
-            OnError?.Invoke($"✅ Сервер запущен на порту {_listenPort}, ожидаю подключения MikroTik...");
 
-            _acceptTask = AcceptLoopAsync(_cts.Token);
+            _readTask = ReadLoopAsync(_cts.Token);
             await Task.CompletedTask;
         }
         catch (Exception ex)
         {
-            OnError?.Invoke($"Failed to start listener: {ex.Message}");
+            OnError?.Invoke($"Failed to start UDP listener: {ex.Message}");
         }
     }
 
-    private async Task AcceptLoopAsync(CancellationToken ct)
+    private async Task ReadLoopAsync(CancellationToken ct)
     {
-        while (!ct.IsCancellationRequested && _listener != null)
+        var remoteEndPoint = new IPEndPoint(IPAddress.Any, 0);
+
+        while (!ct.IsCancellationRequested && _udpClient != null)
         {
             try
             {
-                _client = await _listener.AcceptTcpClientAsync(ct);
-                _stream = _client.GetStream();
-                var remoteEp = _client.Client.RemoteEndPoint?.ToString() ?? "unknown";
-                OnError?.Invoke($"🔗 MikroTik подключился с {remoteEp}");
-                OnConnectionChanged?.Invoke(true);
+                var result = await _udpClient.ReceiveAsync(ct);
+                var data = result.Buffer;
 
-                _readTask = Task.Run(() => ReadLoopAsync(ct));
+                // При первом пакете отмечаем, что MikroTik начал слать
+                if (!IsConnected)
+                {
+                    IsConnected = true;
+                    OnError?.Invoke($"🔗 Получен первый пакет от {result.RemoteEndPoint}");
+                    OnConnectionChanged?.Invoke(true);
+                }
+
+                var packet = ParsePacket(data, data.Length);
+                if (packet != null)
+                {
+                    OnPacketReceived?.Invoke(packet);
+                }
             }
             catch (OperationCanceledException) { break; }
             catch (ObjectDisposedException) { break; }
             catch (Exception ex)
             {
-                OnError?.Invoke($"Accept error: {ex.Message}");
+                OnError?.Invoke($"UDP read error: {ex.Message}");
+                break;
             }
         }
     }
@@ -81,37 +87,8 @@ public class MikroTikSnifferService : IDisposable
     {
         _cts?.Cancel();
         _readTask?.Wait(TimeSpan.FromSeconds(3));
-        _acceptTask?.Wait(TimeSpan.FromSeconds(3));
         Dispose();
-        OnConnectionChanged?.Invoke(false);
-    }
-
-    private async Task ReadLoopAsync(CancellationToken ct)
-    {
-        var buffer = new byte[65536];
-
-        while (!ct.IsCancellationRequested && _stream != null)
-        {
-            try
-            {
-                var bytesRead = await _stream.ReadAsync(buffer, ct);
-                if (bytesRead == 0) break;
-
-                var packet = ParsePacket(buffer, bytesRead);
-                if (packet != null)
-                {
-                    OnPacketReceived?.Invoke(packet);
-                }
-            }
-            catch (OperationCanceledException) { break; }
-            catch (Exception ex)
-            {
-                OnError?.Invoke($"Read error: {ex.Message}");
-                break;
-            }
-        }
-
-        // MikroTik отключился
+        IsConnected = false;
         OnConnectionChanged?.Invoke(false);
     }
 
@@ -176,9 +153,7 @@ public class MikroTikSnifferService : IDisposable
 
     public void Dispose()
     {
-        _stream?.Dispose();
-        _client?.Dispose();
-        _listener?.Stop();
+        _udpClient?.Dispose();
         _cts?.Dispose();
     }
 }
