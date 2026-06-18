@@ -16,6 +16,7 @@ public class MainViewModel : INotifyPropertyChanged
     private readonly TrafficAnalyzer _analyzer;
     private readonly DispatcherTimer _statsTimer;
     private readonly object _alertLock = new();
+    private readonly object _httpsLock = new();
 
     private TrafficStats _stats = new();
     private bool _isConnected;
@@ -24,9 +25,13 @@ public class MainViewModel : INotifyPropertyChanged
     private string _hostAddress = "192.168.105.1";
     private int _hostPort = 2000;
     private long _packetCounter;
+    private int _httpsConnectionCount;
+    private int _httpsEstablishedCount;
+    private int _httpsSynFloodCount;
 
     public ObservableCollection<Alert> Alerts { get; } = new();
     public ObservableCollection<Alert> RecentAlerts { get; } = new();
+    public ObservableCollection<HttpsConnection> HttpsConnections { get; } = new();
 
     public TrafficStats Stats
     {
@@ -70,6 +75,24 @@ public class MainViewModel : INotifyPropertyChanged
         set { _hostPort = value; OnPropertyChanged(); }
     }
 
+    public int HttpsConnectionCount
+    {
+        get => _httpsConnectionCount;
+        set { _httpsConnectionCount = value; OnPropertyChanged(); }
+    }
+
+    public int HttpsEstablishedCount
+    {
+        get => _httpsEstablishedCount;
+        set { _httpsEstablishedCount = value; OnPropertyChanged(); }
+    }
+
+    public int HttpsSynFloodCount
+    {
+        get => _httpsSynFloodCount;
+        set { _httpsSynFloodCount = value; OnPropertyChanged(); }
+    }
+
     public ICommand ConnectCommand { get; }
 
     public MainViewModel()
@@ -79,6 +102,7 @@ public class MainViewModel : INotifyPropertyChanged
         _analyzer = new TrafficAnalyzer();
 
         _analyzer.OnAlert += OnAlert;
+        _analyzer.OnHttpsConnectionUpdate += OnHttpsConnectionUpdate;
 
         _statsTimer = new DispatcherTimer
         {
@@ -131,6 +155,34 @@ public class MainViewModel : INotifyPropertyChanged
         });
     }
 
+    private void OnHttpsConnectionUpdate(HttpsConnection conn)
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            lock (_httpsLock)
+            {
+                // Ищем существующее соединение по ключу
+                var existing = HttpsConnections.FirstOrDefault(c =>
+                    c.SrcIp == conn.SrcIp && c.SrcPort == conn.SrcPort &&
+                    c.DstIp == conn.DstIp && c.DstPort == conn.DstPort);
+
+                if (existing != null)
+                {
+                    var idx = HttpsConnections.IndexOf(existing);
+                    HttpsConnections[idx] = conn;
+                }
+                else
+                {
+                    HttpsConnections.Insert(0, conn);
+                }
+
+                // Ограничим список
+                while (HttpsConnections.Count > 500)
+                    HttpsConnections.RemoveAt(HttpsConnections.Count - 1);
+            }
+        });
+    }
+
     private void OnError(string error)
     {
         Application.Current.Dispatcher.Invoke(() =>
@@ -165,6 +217,10 @@ public class MainViewModel : INotifyPropertyChanged
             AlertsHigh = Alerts.Count(a => a.Level == ThreatLevel.High),
             AlertsMedium = Alerts.Count(a => a.Level == ThreatLevel.Medium),
         };
+
+        HttpsConnectionCount = HttpsConnections.Count;
+        HttpsEstablishedCount = HttpsConnections.Count(c => c.State == ConnectionState.Established);
+        HttpsSynFloodCount = Alerts.Count(a => a.Category == "SYN Flood");
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
