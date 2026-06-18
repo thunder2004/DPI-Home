@@ -121,8 +121,8 @@ public class MikroTikSnifferService : IDisposable
             int versionHeaderLen = data[ipOffset];
             int headerLen = (versionHeaderLen & 0x0F) * 4;
 
-            packet.SrcIp = new IPAddress(data[ipOffset + 12..ipOffset + 16]).ToString();
-            packet.DstIp = new IPAddress(data[ipOffset + 16..ipOffset + 20]).ToString();
+            packet.SrcIp = new IPAddress(data[(ipOffset + 12)..(ipOffset + 16)]).ToString();
+            packet.DstIp = new IPAddress(data[(ipOffset + 16)..(ipOffset + 20)]).ToString();
 
             byte protocol = data[ipOffset + 9];
             packet.Protocol = protocol switch

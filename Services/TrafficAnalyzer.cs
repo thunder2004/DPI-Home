@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using DPI_Home.Models;
 
 namespace DPI_Home.Services;
@@ -21,7 +22,6 @@ public record ThreatSignature
 public class TrafficAnalyzer
 {
     private readonly List<ThreatSignature> _signatures;
-    private readonly ConcurrentDictionary<string, ConnectionState> _connections = new();
     private readonly ConcurrentDictionary<string, PortScanState> _portScans = new();
     private readonly ConcurrentDictionary<string, BruteForceState> _bruteForce = new();
 
