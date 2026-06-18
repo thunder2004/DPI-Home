@@ -1,5 +1,3 @@
-using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -8,16 +6,17 @@ using DPI_Home.Models;
 namespace DPI_Home.Services;
 
 /// <summary>
-/// Сервис захвата трафика с MikroTik через Packet Sniffer (TCP raw stream)
+/// Сервис захвата трафика с MikroTik через Packet Sniffer (TCP server mode)
+/// MikroTik сам подключается к нам на listenPort
 /// </summary>
 public class MikroTikSnifferService : IDisposable
 {
-    private readonly string _host;
-    private readonly int _port;
-    private readonly string _password;
+    private readonly int _listenPort;
+    private TcpListener? _listener;
     private TcpClient? _client;
     private NetworkStream? _stream;
     private CancellationTokenSource? _cts;
+    private Task? _acceptTask;
     private Task? _readTask;
 
     public event Action<RawPacket>? OnPacketReceived;
@@ -25,12 +24,12 @@ public class MikroTikSnifferService : IDisposable
     public event Action<bool>? OnConnectionChanged;
 
     public bool IsConnected => _client?.Connected ?? false;
+    public string ListenAddress { get; private set; } = "0.0.0.0";
+    public int ListenPort => _listenPort;
 
-    public MikroTikSnifferService(string host, int port = 2000, string password = "")
+    public MikroTikSnifferService(int listenPort = 2000)
     {
-        _host = host;
-        _port = port;
-        _password = password;
+        _listenPort = listenPort;
     }
 
     public async Task StartAsync()
@@ -38,27 +37,40 @@ public class MikroTikSnifferService : IDisposable
         if (IsConnected) return;
 
         _cts = new CancellationTokenSource();
-        _client = new TcpClient();
 
         try
         {
-            await _client.ConnectAsync(_host, _port);
-            _stream = _client.GetStream();
-            OnConnectionChanged?.Invoke(true);
+            _listener = new TcpListener(IPAddress.Any, _listenPort);
+            _listener.Start();
+            OnConnectionChanged?.Invoke(false);
 
-            // MikroTik Packet Sniffer protocol handshake
-            if (!string.IsNullOrEmpty(_password))
-            {
-                var authBytes = Encoding.ASCII.GetBytes(_password + "\n");
-                await _stream.WriteAsync(authBytes, _cts.Token);
-            }
-
-            _readTask = Task.Run(() => ReadLoopAsync(_cts.Token));
+            _acceptTask = AcceptLoopAsync(_cts.Token);
+            await Task.CompletedTask;
         }
         catch (Exception ex)
         {
-            OnError?.Invoke($"Connection failed: {ex.Message}");
-            OnConnectionChanged?.Invoke(false);
+            OnError?.Invoke($"Failed to start listener: {ex.Message}");
+        }
+    }
+
+    private async Task AcceptLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested && _listener != null)
+        {
+            try
+            {
+                _client = await _listener.AcceptTcpClientAsync(ct);
+                _stream = _client.GetStream();
+                OnConnectionChanged?.Invoke(true);
+
+                _readTask = Task.Run(() => ReadLoopAsync(ct));
+            }
+            catch (OperationCanceledException) { break; }
+            catch (ObjectDisposedException) { break; }
+            catch (Exception ex)
+            {
+                OnError?.Invoke($"Accept error: {ex.Message}");
+            }
         }
     }
 
@@ -66,6 +78,7 @@ public class MikroTikSnifferService : IDisposable
     {
         _cts?.Cancel();
         _readTask?.Wait(TimeSpan.FromSeconds(3));
+        _acceptTask?.Wait(TimeSpan.FromSeconds(3));
         Dispose();
         OnConnectionChanged?.Invoke(false);
     }
@@ -94,6 +107,9 @@ public class MikroTikSnifferService : IDisposable
                 break;
             }
         }
+
+        // MikroTik отключился
+        OnConnectionChanged?.Invoke(false);
     }
 
     private static RawPacket? ParsePacket(byte[] data, int length)
@@ -159,6 +175,7 @@ public class MikroTikSnifferService : IDisposable
     {
         _stream?.Dispose();
         _client?.Dispose();
+        _listener?.Stop();
         _cts?.Dispose();
     }
 }

@@ -42,7 +42,6 @@
             <Setter Property="Margin" Value="0,0,0,12"/>
         </Style>
 
-        <!-- TabControl style -->
         <Style TargetType="TabControl">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
@@ -119,29 +118,23 @@
 
                     <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="0,0,12,0">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="Хост:" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                            <TextBox Text="{Binding HostAddress}" Width="130" FontSize="12"
-                                     Background="#0D1B2A" Foreground="White" BorderThickness="0"
-                                     materialDesign:HintAssist.Hint="192.168.105.1"/>
-                            <TextBlock Text=":" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="4,0"/>
-                            <TextBox Text="{Binding HostPort}" Width="50" FontSize="12"
-                                     Background="#0D1B2A" Foreground="White" BorderThickness="0"
-                                     materialDesign:HintAssist.Hint="2000"/>
+                            <TextBlock Text="Прослушиваем порт:" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBlock Text="{Binding ListenPort}" FontSize="13" Foreground="#64B5F6" FontWeight="Bold" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Border>
 
-                    <Button Command="{Binding ConnectCommand}" Width="120" Height="36"
+                    <Button Command="{Binding StartCommand}" Width="140" Height="36"
                             materialDesign:ButtonAssist.CornerRadius="8"
                             FontWeight="SemiBold" FontSize="13">
                         <Button.Style>
                             <Style TargetType="Button" BasedOn="{StaticResource MaterialDesignRaisedButton}">
                                 <Setter Property="Background" Value="#4CAF50"/>
                                 <Setter Property="Foreground" Value="White"/>
-                                <Setter Property="Content" Value="▶ Подключиться"/>
+                                <Setter Property="Content" Value="▶ Старт"/>
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsConnected}" Value="True">
                                         <Setter Property="Background" Value="#F44336"/>
-                                        <Setter Property="Content" Value="■ Отключиться"/>
+                                        <Setter Property="Content" Value="■ Стоп"/>
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -165,7 +158,6 @@
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Stat: Packets -->
                 <Border Grid.Column="0" Style="{StaticResource StatCardStyle}" Margin="0,0,4,0">
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="📦" FontSize="18" HorizontalAlignment="Center"/>
@@ -175,7 +167,6 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Stat: Critical -->
                 <Border Grid.Column="1" Style="{StaticResource StatCardStyle}" Margin="4,0">
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="💀" FontSize="18" HorizontalAlignment="Center"/>
@@ -185,7 +176,6 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Stat: High -->
                 <Border Grid.Column="2" Style="{StaticResource StatCardStyle}" Margin="4,0">
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="🔴" FontSize="18" HorizontalAlignment="Center"/>
@@ -195,7 +185,6 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Stat: Medium -->
                 <Border Grid.Column="3" Style="{StaticResource StatCardStyle}" Margin="4,0">
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="⚡" FontSize="18" HorizontalAlignment="Center"/>
@@ -205,7 +194,6 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Stat: Total Alerts -->
                 <Border Grid.Column="4" Style="{StaticResource StatCardStyle}" Margin="4,0">
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="🚨" FontSize="18" HorizontalAlignment="Center"/>
@@ -215,7 +203,6 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Stat: HTTPS connections -->
                 <Border Grid.Column="5" Style="{StaticResource StatCardStyle}" Margin="4,0">
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="🔒" FontSize="18" HorizontalAlignment="Center"/>
@@ -225,7 +212,6 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Stat: HTTPS Established -->
                 <Border Grid.Column="6" Style="{StaticResource StatCardStyle}" Margin="4,0">
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="✅" FontSize="18" HorizontalAlignment="Center"/>
@@ -235,7 +221,6 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Stat: Status -->
                 <Border Grid.Column="7" Style="{StaticResource StatCardStyle}" Margin="4,0,0,0">
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock FontSize="18" HorizontalAlignment="Center">
@@ -375,7 +360,6 @@
                                     <RowDefinition Height="*"/>
                                 </Grid.RowDefinitions>
 
-                                <!-- HTTPS mini-stats -->
                                 <Border Grid.Row="0" Background="#0D1B2A" CornerRadius="8" Padding="10" Margin="0,0,0,8"
                                         BorderBrush="#2A2A4A" BorderThickness="1">
                                     <Grid>
@@ -399,7 +383,6 @@
                                     </Grid>
                                 </Border>
 
-                                <!-- HTTPS connections list -->
                                 <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
                                     <ItemsControl ItemsSource="{Binding HttpsConnections}">
                                         <ItemsControl.ItemTemplate>
