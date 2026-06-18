@@ -44,7 +44,7 @@ public class AlertAggregator : IDisposable
                 group.MaxLevel = alert.Level;
 
             // Обновляем статистику по категории
-            var catKey = alert.Category;
+            var catKey = string.IsNullOrEmpty(alert.ShortName) ? alert.Title : alert.ShortName;
             if (!group.Categories.ContainsKey(catKey))
             {
                 group.Categories[catKey] = new ThreatInfo
