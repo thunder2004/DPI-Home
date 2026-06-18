@@ -33,7 +33,8 @@ public class MikroTikSnifferService : IDisposable
 
     public async Task StartAsync()
     {
-        if (IsConnected) return;
+        // Если уже запущен — игнорируем
+        if (_udpClient != null) return;
 
         _cts = new CancellationTokenSource();
 
@@ -41,6 +42,7 @@ public class MikroTikSnifferService : IDisposable
         {
             _udpClient = new UdpClient(_listenPort);
             OnError?.Invoke($"✅ UDP сервер запущен на порту {_listenPort}, ожидаю пакеты от MikroTik...");
+            IsConnected = false;
             OnConnectionChanged?.Invoke(false);
 
             _readTask = ReadLoopAsync(_cts.Token);
@@ -49,6 +51,7 @@ public class MikroTikSnifferService : IDisposable
         catch (Exception ex)
         {
             OnError?.Invoke($"Failed to start UDP listener: {ex.Message}");
+            _udpClient = null;
         }
     }
 
@@ -61,7 +64,6 @@ public class MikroTikSnifferService : IDisposable
                 var result = await _udpClient.ReceiveAsync(ct);
                 var data = result.Buffer;
 
-                // При первом пакете сохраняем дамп
                 if (!IsConnected)
                 {
                     var hex = BitConverter.ToString(data, 0, Math.Min(64, data.Length));
@@ -96,8 +98,16 @@ public class MikroTikSnifferService : IDisposable
     public void Stop()
     {
         _cts?.Cancel();
-        _readTask?.Wait(TimeSpan.FromSeconds(3));
-        Dispose();
+
+        // Закрываем UDP клиент — ReceiveAsync сразу упадёт с ObjectDisposedException
+        _udpClient?.Dispose();
+        _udpClient = null;
+
+        _readTask?.Wait(TimeSpan.FromSeconds(2));
+
+        _cts?.Dispose();
+        _cts = null;
+
         IsConnected = false;
         OnConnectionChanged?.Invoke(false);
     }
@@ -116,14 +126,12 @@ public class MikroTikSnifferService : IDisposable
                 PayloadHex = Convert.ToHexString(data, 0, Math.Min(length, 64))
             };
 
-            // Пропускаем 5 байт служебного заголовка MikroTik
             int off = MikroTikStreamHeader;
 
             // Parse Ethernet header
             packet.DstMac = BitConverter.ToString(data, off + 0, 6).Replace('-', ':');
             packet.SrcMac = BitConverter.ToString(data, off + 6, 6).Replace('-', ':');
 
-            // Начало IP-заголовка
             int ipOffset = off + 14;
             if (length <= ipOffset) return packet;
 
@@ -131,7 +139,6 @@ public class MikroTikSnifferService : IDisposable
             int versionHeaderLen = data[ipOffset];
             int headerLen = (versionHeaderLen & 0x0F) * 4;
 
-            // IP-адреса — байты 12-15 (src) и 16-19 (dst) от начала IP-заголовка
             packet.SrcIp = new IPAddress(data[(ipOffset + 12)..(ipOffset + 16)]).ToString();
             packet.DstIp = new IPAddress(data[(ipOffset + 16)..(ipOffset + 20)]).ToString();
 
@@ -144,7 +151,6 @@ public class MikroTikSnifferService : IDisposable
                 _ => $"IP-{protocol}"
             };
 
-            // Parse TCP/UDP ports
             int transportOffset = ipOffset + headerLen;
             if (transportOffset + 4 <= length && (protocol == 6 || protocol == 17))
             {
@@ -152,7 +158,6 @@ public class MikroTikSnifferService : IDisposable
                 packet.DstPort = (data[transportOffset + 2] << 8) | data[transportOffset + 3];
             }
 
-            // Parse TCP flags (offset 13 in TCP header)
             if (protocol == 6 && transportOffset + 14 <= length)
             {
                 packet.TcpFlags = data[transportOffset + 13];
@@ -168,7 +173,6 @@ public class MikroTikSnifferService : IDisposable
 
     public void Dispose()
     {
-        _udpClient?.Dispose();
-        _cts?.Dispose();
+        Stop();
     }
 }
