@@ -20,7 +20,7 @@ public class MainViewModel : INotifyPropertyChanged
 
     private TrafficStats _stats = new();
     private bool _isConnected;
-    private string _connectionStatus = "Ожидание подключения MikroTik...";
+    private string _connectionStatus = "Ожидание пакетов от MikroTik...";
     private string _statusColor = "#FF9800";
     private int _listenPort = 37008;
     private long _packetCounter;
@@ -29,7 +29,6 @@ public class MainViewModel : INotifyPropertyChanged
     private int _httpsSynFloodCount;
 
     public ObservableCollection<Alert> Alerts { get; } = new();
-    public ObservableCollection<Alert> RecentAlerts { get; } = new();
     public ObservableCollection<HttpsConnection> HttpsConnections { get; } = new();
 
     public TrafficStats Stats
@@ -45,7 +44,7 @@ public class MainViewModel : INotifyPropertyChanged
         {
             _isConnected = value;
             OnPropertyChanged();
-            ConnectionStatus = value ? "✅ MikroTik подключён" : "⏳ Ожидание подключения MikroTik...";
+            ConnectionStatus = value ? "✅ Получаю пакеты от MikroTik" : "⏳ Ожидание пакетов от MikroTik...";
             StatusColor = value ? "#4CAF50" : "#FF9800";
         }
     }
@@ -88,11 +87,13 @@ public class MainViewModel : INotifyPropertyChanged
 
     public ICommand StartCommand { get; }
     public ICommand StopCommand { get; }
+    public ICommand ClearLogCommand { get; }
 
     public MainViewModel()
     {
         StartCommand = new AsyncRelayCommand(StartAsync);
         StopCommand = new RelayCommand(Stop);
+        ClearLogCommand = new RelayCommand(ClearLog);
 
         _sniffer = CreateSniffer();
         _analyzer = new TrafficAnalyzer();
@@ -135,6 +136,14 @@ public class MainViewModel : INotifyPropertyChanged
         IsConnected = false;
     }
 
+    public void ClearLog()
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            Alerts.Clear();
+        });
+    }
+
     private void OnPacketReceived(RawPacket packet)
     {
         Interlocked.Increment(ref _packetCounter);
@@ -148,10 +157,8 @@ public class MainViewModel : INotifyPropertyChanged
             lock (_alertLock)
             {
                 Alerts.Insert(0, alert);
-                RecentAlerts.Insert(0, alert);
 
                 if (Alerts.Count > 1000) Alerts.RemoveAt(Alerts.Count - 1);
-                if (RecentAlerts.Count > 100) RecentAlerts.RemoveAt(RecentAlerts.Count - 1);
             }
         });
     }
@@ -191,7 +198,7 @@ public class MainViewModel : INotifyPropertyChanged
                 Timestamp = DateTime.Now,
                 Level = ThreatLevel.High,
                 Category = "System",
-                Title = "Ошибка",
+                Title = "Система",
                 Description = error,
                 Score = 0
             });

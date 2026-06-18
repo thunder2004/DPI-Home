@@ -187,18 +187,39 @@ public class TrafficAnalyzer
 
     /// <summary>
     /// Трекинг HTTPS-соединений (порт 443) — SYN/SYN-ACK/RST/FIN
+    /// Отслеживаем как dstPort=443 (исходящие), так и srcPort=443 (входящие ответы)
     /// </summary>
     private void TrackHttpsConnection(RawPacket packet)
     {
-        if (packet.DstPort != 443 || packet.Protocol != "TCP") return;
+        if (packet.Protocol != "TCP") return;
+        if (packet.DstPort != 443 && packet.SrcPort != 443) return;
 
         bool isSyn = (packet.TcpFlags & 0x02) != 0;
         bool isAck = (packet.TcpFlags & 0x10) != 0;
         bool isRst = (packet.TcpFlags & 0x04) != 0;
         bool isFin = (packet.TcpFlags & 0x01) != 0;
 
-        // Ключ: srcIp:srcPort -> dstIp:443 (уникальная пара)
-        var connKey = $"{packet.SrcIp}:{packet.SrcPort}->{packet.DstIp}:443";
+        // Определяем направление: клиент -> сервер (dst=443) или сервер -> клиент (src=443)
+        string clientIp, serverIp;
+        int clientPort;
+
+        if (packet.DstPort == 443)
+        {
+            // Исходящий пакет: клиент (src) -> сервер (dst:443)
+            clientIp = packet.SrcIp;
+            clientPort = packet.SrcPort;
+            serverIp = packet.DstIp;
+        }
+        else
+        {
+            // Входящий пакет: сервер (src:443) -> клиент (dst)
+            clientIp = packet.DstIp;
+            clientPort = packet.DstPort;
+            serverIp = packet.SrcIp;
+        }
+
+        // Ключ: clientIp:clientPort -> serverIp:443
+        var connKey = $"{clientIp}:{clientPort}->{serverIp}:443";
 
         if (isSyn && !isAck)
         {
