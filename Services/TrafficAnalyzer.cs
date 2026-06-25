@@ -37,8 +37,30 @@ public class TrafficAnalyzer
 
     public TrafficAnalyzer() => _signatures = LoadSignatures();
 
+    /// <summary>
+    /// Проверяет, является ли IP локальным (RFC 1918 + link-local).
+    /// Пакеты от таких IP в контексте WAN rx — это NAT-reflection или артефакты,
+    /// их не следует считать угрозами.
+    /// </summary>
+    private static bool IsPrivateIp(string ip)
+    {
+        if (string.IsNullOrEmpty(ip)) return false;
+        // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 127.0.0.0/8
+        return ip.StartsWith("10.") ||
+               ip.StartsWith("192.168.") ||
+               ip.StartsWith("127.") ||
+               ip.StartsWith("169.254.") ||
+               (ip.StartsWith("172.") && int.TryParse(ip.Substring(4, ip.IndexOf('.', 4) - 4), out int second) && second >= 16 && second <= 31);
+    }
+
     public void Analyze(RawPacket packet)
     {
+        // ── Фильтр: игнорируем пакеты от локальных IP ──
+        // В WAN rx-потоке локальные SrcIp — это NAT-reflection или артефакты RouterOS,
+        // их не следует считать угрозами.
+        if (IsPrivateIp(packet.SrcIp))
+            return;
+
         foreach (var sig in _signatures)
         {
             if (sig.Match(packet))
@@ -71,6 +93,7 @@ public class TrafficAnalyzer
     private void DetectPortScan(RawPacket packet)
     {
         if (string.IsNullOrEmpty(packet.SrcIp) || packet.DstPort == 0) return;
+        // Локальные IP уже отфильтрованы в Analyze()
         var state = _portScans.GetOrAdd(packet.SrcIp, _ => new PortScanState());
         lock (state)
         {
@@ -101,6 +124,7 @@ public class TrafficAnalyzer
     {
         if (string.IsNullOrEmpty(packet.SrcIp) || packet.DstPort == 0) return;
         if (packet.DstPort is not (22 or 3389 or 21 or 1433 or 3306 or 5432)) return;
+        // Локальные IP уже отфильтрованы в Analyze()
         var key = $"{packet.SrcIp}:{packet.DstPort}";
         var state = _bruteForce.GetOrAdd(key, _ => new BruteForceState());
         lock (state)
@@ -135,6 +159,7 @@ public class TrafficAnalyzer
         bool isSyn = (packet.TcpFlags & 0x02) != 0;
         bool isAck = (packet.TcpFlags & 0x10) != 0;
         if (!isSyn || isAck) return;
+        // Локальные IP уже отфильтрованы в Analyze()
         var state = _synFloods.GetOrAdd(packet.SrcIp, _ => new SynFloodState());
         lock (state)
         {
@@ -148,7 +173,7 @@ public class TrafficAnalyzer
                     Level = ThreatLevel.Critical,
                     Category = "SYN Flood",
                     Title = $"SYN Flood атака на порт 443 с {packet.SrcIp}",
-                    ShortName = $"SYN Flood",
+                    ShortName = "SYN Flood",
                     Description = $"IP {packet.SrcIp} — {state.AttemptsInWindow(WindowSeconds)} SYN-пакетов за {WindowSeconds}с на порт 443",
                     SrcIp = packet.SrcIp,
                     DstIp = packet.DstIp,
@@ -288,17 +313,36 @@ public class TrafficAnalyzer
 
     private static List<ThreatSignature> LoadSignatures() => new()
     {
-        new() { Name = "NULL Scan", Category = "Recon", Level = ThreatLevel.High, Description = "TCP-пакет с нулевыми флагами", Match = p => p.Protocol == "TCP" && p.PayloadRaw.Length > 20 && (p.PayloadRaw[33] & 0x3F) == 0 },
-        new() { Name = "XMAS Scan", Category = "Recon", Level = ThreatLevel.High, Description = "TCP-пакет с FIN+PSH+URG", Match = p => p.Protocol == "TCP" && p.PayloadRaw.Length > 20 && (p.PayloadRaw[33] & 0x3F) == 0x29 },
-        new() { Name = "FIN Scan", Category = "Recon", Level = ThreatLevel.Medium, Description = "TCP-пакет только с FIN флагом", Match = p => p.Protocol == "TCP" && p.PayloadRaw.Length > 20 && (p.PayloadRaw[33] & 0x3F) == 0x01 },
-        new() { Name = "EternalBlue", Category = "Exploit", Level = ThreatLevel.Critical, Description = "EternalBlue/MS17-010", Match = p => p.DstPort == 445 && p.PayloadRaw.Length > 100 && p.PayloadHex.Contains("000000FF534D42", StringComparison.OrdinalIgnoreCase) },
-        new() { Name = "SQL Injection", Category = "Web Attack", Level = ThreatLevel.High, Description = "SQL-инъекция в HTTP", Match = p => (p.DstPort == 80 || p.DstPort == 443) && Encoding.UTF8.GetString(p.PayloadRaw).Contains("' OR '1'='1", StringComparison.OrdinalIgnoreCase) },
-        new() { Name = "XSS Probe", Category = "Web Attack", Level = ThreatLevel.Medium, Description = "XSS в HTTP", Match = p => (p.DstPort == 80 || p.DstPort == 443) && Encoding.UTF8.GetString(p.PayloadRaw).Contains("<script>", StringComparison.OrdinalIgnoreCase) },
-        new() { Name = "DNS Tunneling", Category = "C2/Tunnel", Level = ThreatLevel.High, Description = "Длинный DNS-запрос", Match = p => p.DstPort == 53 && p.PayloadRaw.Length > 200 },
-        new() { Name = "ICMP Tunneling", Category = "C2/Tunnel", Level = ThreatLevel.High, Description = "Крупный ICMP", Match = p => p.Protocol == "ICMP" && p.PacketLength > 500 },
-        new() { Name = "RDP Anomaly", Category = "Brute Force", Level = ThreatLevel.High, Description = "Подозрительная RDP активность", Match = p => p.DstPort == 3389 && p.PacketLength < 100 },
-        new() { Name = "SSH Anomaly", Category = "Anomaly", Level = ThreatLevel.Medium, Description = "Нестандартный SSH", Match = p => p.DstPort == 22 && p.PacketLength > 1500 },
-        new() { Name = "WinBox Exploit", Category = "Exploit", Level = ThreatLevel.Critical, Description = "CVE-2018-14847", Match = p => p.DstPort == 8291 && p.PayloadRaw.Length > 50 },
+        // ─── TCP Scan Signatures (using TcpFlags field, NOT PayloadRaw offsets) ───
+        new() { Name = "NULL Scan", Category = "Recon", Level = ThreatLevel.High,
+            Description = "TCP NULL Scan — пакет без флагов",
+            Match = p => p.Protocol == "TCP" && p.TcpFlags == 0x00 && p.DstPort > 0 },
+
+        new() { Name = "XMAS Scan", Category = "Recon", Level = ThreatLevel.High,
+            Description = "TCP XMAS Scan — FIN+PSH+URG флаги",
+            Match = p => p.Protocol == "TCP" && (p.TcpFlags & 0x29) == 0x29 && (p.TcpFlags & 0x12) == 0 },
+
+        new() { Name = "FIN Scan", Category = "Recon", Level = ThreatLevel.Medium,
+            Description = "TCP FIN Scan — только FIN флаг",
+            Match = p => p.Protocol == "TCP" && (p.TcpFlags & 0x3F) == 0x01 },
+
+        // ─── Exploit Signatures ───
+        new() { Name = "EternalBlue", Category = "Exploit", Level = ThreatLevel.Critical,
+            Description = "EternalBlue/MS17-010 — SMB эксплойт",
+            Match = p => p.DstPort == 445 && p.PayloadRaw.Length > 100 && p.PayloadHex.Contains("000000FF534D42", StringComparison.OrdinalIgnoreCase) },
+
+        new() { Name = "WinBox Exploit", Category = "Exploit", Level = ThreatLevel.Critical,
+            Description = "CVE-2018-14847 — WinBox exploit",
+            Match = p => p.DstPort == 8291 && p.PayloadRaw.Length > 50 && p.PacketLength > 100 },
+
+        // ─── C2/Tunnel Signatures ───
+        new() { Name = "DNS Tunneling", Category = "C2/Tunnel", Level = ThreatLevel.High,
+            Description = "Подозрительно длинный DNS-запрос (>500 байт)",
+            Match = p => p.DstPort == 53 && p.PacketLength > 500 },
+
+        new() { Name = "ICMP Tunneling", Category = "C2/Tunnel", Level = ThreatLevel.High,
+            Description = "Аномально большой ICMP-пакет",
+            Match = p => p.Protocol == "ICMP" && p.PacketLength > 1000 },
     };
 
     private class PortScanState
