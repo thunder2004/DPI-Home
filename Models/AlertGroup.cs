@@ -65,9 +65,41 @@ public class AlertGroup
         {
             var parts = Categories
                 .OrderByDescending(c => c.Value.Count)
-                .Select(c => $"{c.Key} x{c.Value.Count}");
+                .Select(c => c.Value.Ports.Count > 0
+                    ? $"{c.Key} x{c.Value.Count} ({FormatPorts(c.Value.Ports)})"
+                    : $"{c.Key} x{c.Value.Count}");
             return string.Join(", ", parts);
         }
+    }
+
+    /// <summary>
+    /// Форматирует список портов в компактный вид: 21-25, 80, 443
+    /// </summary>
+    private static string FormatPorts(SortedSet<int> ports)
+    {
+        if (ports.Count == 0) return "";
+        if (ports.Count > 15) return $"{ports.Min}-{ports.Max} ({ports.Count} портов)";
+
+        var ranges = new List<string>();
+        var sorted = ports.ToList();
+        int rangeStart = sorted[0];
+        int rangeEnd = sorted[0];
+
+        for (int i = 1; i < sorted.Count; i++)
+        {
+            if (sorted[i] == rangeEnd + 1)
+            {
+                rangeEnd = sorted[i];
+            }
+            else
+            {
+                ranges.Add(rangeStart == rangeEnd ? $"{rangeStart}" : $"{rangeStart}-{rangeEnd}");
+                rangeStart = sorted[i];
+                rangeEnd = sorted[i];
+            }
+        }
+        ranges.Add(rangeStart == rangeEnd ? $"{rangeStart}" : $"{rangeStart}-{rangeEnd}");
+        return string.Join(", ", ranges);
     }
 
     public string CountLabel => TotalCount switch
@@ -83,4 +115,5 @@ public class ThreatInfo
 {
     public string Icon { get; set; } = "❓";
     public int Count { get; set; }
+    public SortedSet<int> Ports { get; set; } = new();
 }

@@ -56,6 +56,13 @@ public class AlertAggregator : IDisposable
             group.Categories[catKey].Count++;
             if (alert.LevelIcon != group.Categories[catKey].Icon)
                 group.Categories[catKey].Icon = alert.LevelIcon;
+
+            // Мержим порты (для Port Scan и других атак с целевыми портами)
+            if (alert.ScannedPorts != null)
+            {
+                foreach (var port in alert.ScannedPorts)
+                    group.Categories[catKey].Ports.Add(port);
+            }
         }
     }
 
