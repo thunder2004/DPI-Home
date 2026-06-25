@@ -323,10 +323,12 @@ public class MainViewModel : INotifyPropertyChanged
             var alert = new Alert
             {
                 Timestamp = DateTime.Now,
-                Level = ThreatLevel.High,
+                Level = ThreatLevel.Info,
                 Category = "System",
                 Title = "Система",
+                ShortName = "ℹ️ System",
                 Description = error,
+                SrcIp = "system",
                 Score = 0
             };
             _aggregator.Add(alert);
