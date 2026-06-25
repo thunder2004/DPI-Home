@@ -30,6 +30,7 @@ public class Alert
     public long PacketCount { get; set; }
     public double Score { get; set; }
     public string ShortName { get; set; } = string.Empty;
+    public HashSet<int> ScannedPorts { get; set; } = new();
 
     public string LevelIcon => Level switch
     {

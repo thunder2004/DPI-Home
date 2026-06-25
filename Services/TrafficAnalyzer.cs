@@ -79,7 +79,8 @@ public class TrafficAnalyzer
                     DstPort = packet.DstPort,
                     Protocol = packet.Protocol,
                     PacketCount = 1,
-                    Score = (int)sig.Level * 25
+                    Score = (int)sig.Level * 25,
+                    ScannedPorts = packet.DstPort > 0 ? new HashSet<int> { packet.DstPort } : new()
                 });
             }
         }
@@ -113,7 +114,8 @@ public class TrafficAnalyzer
                     DstIp = packet.DstIp,
                     Protocol = packet.Protocol,
                     PacketCount = state.TotalAttempts,
-                    Score = 75
+                    Score = 75,
+                    ScannedPorts = new HashSet<int>(state.GetPortsInWindow(WindowSeconds))
                 });
                 state.Reset();
             }
@@ -146,7 +148,8 @@ public class TrafficAnalyzer
                     DstPort = packet.DstPort,
                     Protocol = packet.Protocol,
                     PacketCount = state.TotalAttempts,
-                    Score = 90
+                    Score = 90,
+                    ScannedPorts = new HashSet<int> { packet.DstPort }
                 });
                 state.Reset();
             }
@@ -180,7 +183,8 @@ public class TrafficAnalyzer
                     DstPort = 443,
                     Protocol = "TCP",
                     PacketCount = state.TotalAttempts,
-                    Score = 95
+                    Score = 95,
+                    ScannedPorts = new HashSet<int> { 443 }
                 });
                 state.Reset();
             }
@@ -351,6 +355,7 @@ public class TrafficAnalyzer
         public long TotalAttempts { get; private set; }
         public void AddAttempt(int port, DateTime time) { _attempts.Add((port, time)); TotalAttempts++; }
         public int UniquePortsInWindow(int s) { var c = DateTime.UtcNow.AddSeconds(-s); return _attempts.Where(a => a.Time > c).Select(a => a.Port).Distinct().Count(); }
+        public List<int> GetPortsInWindow(int s) { var c = DateTime.UtcNow.AddSeconds(-s); return _attempts.Where(a => a.Time > c).Select(a => a.Port).Distinct().OrderBy(p => p).ToList(); }
         public void PurgeOld(int s) { var c = DateTime.UtcNow.AddSeconds(-s * 3); _attempts.RemoveAll(a => a.Time < c); }
         public void Reset() { _attempts.Clear(); }
     }
