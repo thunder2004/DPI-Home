@@ -161,6 +161,7 @@ public class MikroTikSnifferService : IDisposable
             if (protocol == 6 && transportOffset + 14 <= length)
             {
                 packet.TcpFlags = data[transportOffset + 13];
+                packet.TcpFlagsParsed = true;
             }
 
             return packet;
