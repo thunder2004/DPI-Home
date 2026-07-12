@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Windows;
 using DPI_Home.Models;
 using DPI_Home.ViewModels;
 
@@ -91,6 +92,7 @@ public class AgentApiService : IDisposable
             (response, statusCode) = path switch
             {
                 "/api/blocks" when method == "GET" => (await GetBlocks(), 200),
+                "/api/blocks" when method == "POST" => (await CreateBlock(ctx), 200),
                 "/api/blocks" when method == "DELETE" => (await DeleteAllBlocks(ctx), 200),
 
                 var p when p.StartsWith("/api/blocks/") && method == "DELETE" =>
@@ -99,6 +101,13 @@ public class AgentApiService : IDisposable
                 "/api/alerts" when method == "GET" => (GetAlerts(), 200),
 
                 var p when p == "/api/status" && method == "GET" => (GetStatus(), 200),
+
+                "/api/capture/start" when method == "POST" => (await StartCapture(), 200),
+                "/api/capture/stop" when method == "POST" => (StopCapture(), 200),
+
+                "/api/autoblock" when method == "POST" => (await SetAutoBlock(ctx), 200),
+                "/api/wanip" when method == "POST" => (await SetWanIp(ctx), 200),
+                "/api/rdp-settings" when method == "POST" => (await SetRdpSettings(ctx), 200),
 
                 _ => ("{\"error\":\"Not Found\"}", 404)
             };
@@ -208,6 +217,112 @@ public class AgentApiService : IDisposable
         }
     }
 
+    private async Task<string> CreateBlock(HttpListenerContext ctx)
+    {
+        using var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
+        var body = await reader.ReadToEndAsync();
+        var payload = JsonSerializer.Deserialize<BlockRequest>(body, JsonOpts);
+
+        if (string.IsNullOrWhiteSpace(payload?.Ip))
+            return JsonSerializer.Serialize(new { error = "ip required" });
+
+        if (_vm.MikrotikApi == null)
+            return JsonSerializer.Serialize(new { error = "MikroTik not connected" });
+
+        var reason = string.IsNullOrWhiteSpace(payload.Reason)
+            ? $"DPI-Home agent-api block {DateTime.Now:yyyy-MM-dd HH:mm}"
+            : payload.Reason;
+
+        // BlockIp only touches MikroTik over the network and adds to the alert
+        // aggregator (which already dispatches to the UI thread internally via
+        // OnAlertGroup) — safe to await directly from this background thread.
+        await _vm.BlockIp(payload.Ip, reason);
+        return JsonSerializer.Serialize(new { blocked = payload.Ip, reason });
+    }
+
+    private async Task<string> StartCapture()
+    {
+        // StartAsync() toggles: if already connected it would STOP capture instead.
+        // Guard explicitly so a POST /api/capture/start is never accidentally a stop.
+        bool alreadyRunning = RunOnUiThread(() => _vm.IsConnected);
+        if (alreadyRunning)
+            return JsonSerializer.Serialize(new { started = false, note = "already running" });
+
+        await RunOnUiThreadAsync(() => _vm.StartAsync());
+        return JsonSerializer.Serialize(new { started = true });
+    }
+
+    private string StopCapture()
+    {
+        bool wasRunning = RunOnUiThread(() =>
+        {
+            if (!_vm.IsConnected) return false;
+            _vm.Stop();
+            return true;
+        });
+        return JsonSerializer.Serialize(new { stopped = wasRunning });
+    }
+
+    private async Task<string> SetAutoBlock(HttpListenerContext ctx)
+    {
+        using var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
+        var body = await reader.ReadToEndAsync();
+        var payload = JsonSerializer.Deserialize<AutoBlockRequest>(body, JsonOpts);
+
+        RunOnUiThread(() => _vm.AutoBlockEnabled = payload?.Enabled ?? false);
+        return JsonSerializer.Serialize(new { autoBlock = _vm.AutoBlockEnabled });
+    }
+
+    private async Task<string> SetWanIp(HttpListenerContext ctx)
+    {
+        using var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
+        var body = await reader.ReadToEndAsync();
+        var payload = JsonSerializer.Deserialize<WanIpRequest>(body, JsonOpts);
+
+        if (string.IsNullOrWhiteSpace(payload?.Ip))
+            return JsonSerializer.Serialize(new { error = "ip required" });
+
+        RunOnUiThread(() =>
+        {
+            _vm.WanIp = payload.Ip;
+            _vm.ApplyWanIpManual();
+        });
+        return JsonSerializer.Serialize(new { wanIp = _vm.WanIp });
+    }
+
+    private async Task<string> SetRdpSettings(HttpListenerContext ctx)
+    {
+        using var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
+        var body = await reader.ReadToEndAsync();
+        var payload = JsonSerializer.Deserialize<RdpSettingsRequest>(body, JsonOpts);
+
+        if (payload == null)
+            return JsonSerializer.Serialize(new { error = "invalid body" });
+
+        RunOnUiThread(() =>
+        {
+            if (payload.Threshold > 0) _vm.RdpThreshold = payload.Threshold;
+            if (payload.WindowMinutes > 0) _vm.RdpWindowMinutes = payload.WindowMinutes;
+        });
+        return JsonSerializer.Serialize(new { rdpThreshold = _vm.RdpThreshold, rdpWindowMinutes = _vm.RdpWindowMinutes });
+    }
+
+    /// <summary>
+    /// Marshals a mutation onto the UI thread. Required for anything that touches a
+    /// WPF-bound property or ObservableCollection: this API server runs handlers on
+    /// thread-pool threads, but WPF's binding system throws if a bound property is
+    /// changed (i.e. PropertyChanged raised) from a non-UI thread.
+    /// </summary>
+    private static void RunOnUiThread(Action action) =>
+        Application.Current.Dispatcher.Invoke(action);
+
+    private static T RunOnUiThread<T>(Func<T> func) =>
+        Application.Current.Dispatcher.Invoke(func);
+
+    /// <summary>Same as RunOnUiThread but for an async operation started on the UI thread.</summary>
+    private static Task RunOnUiThreadAsync(Func<Task> action) =>
+        Application.Current.Dispatcher.InvokeAsync(action).Task.Unwrap();
+
     private string GetAlerts()
     {
         var alerts = _vm.AlertGroups
@@ -249,6 +364,8 @@ public class AgentApiService : IDisposable
             stats = _vm.Stats,
             autoBlock = _vm.AutoBlockEnabled,
             listenPort = _vm.ListenPort,
+            rdpThreshold = _vm.RdpThreshold,
+            rdpWindowMinutes = _vm.RdpWindowMinutes,
             httpsClients = _vm.HttpsServerCount,
             httpsEstablished = _vm.HttpsEstablishedCount,
             alertsTotal = _vm.AlertGroups.Count
@@ -296,4 +413,26 @@ public class UnblockAllRequest
 {
     [JsonPropertyName("confirm")]
     public bool Confirm { get; set; }
+}
+
+public class BlockRequest
+{
+    public string Ip { get; set; } = "";
+    public string? Reason { get; set; }
+}
+
+public class AutoBlockRequest
+{
+    public bool Enabled { get; set; }
+}
+
+public class WanIpRequest
+{
+    public string Ip { get; set; } = "";
+}
+
+public class RdpSettingsRequest
+{
+    public int Threshold { get; set; }
+    public int WindowMinutes { get; set; }
 }
