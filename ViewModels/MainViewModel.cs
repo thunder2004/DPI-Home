@@ -22,6 +22,7 @@ public class MainViewModel : INotifyPropertyChanged
     private readonly DispatcherTimer _statsTimer;
     private readonly object _httpsLock = new();
     private AgentApiService? _agentApi;
+    private string _agentApiKey = "";
 
     private TrafficStats _stats = new();
     private bool _isConnected;
@@ -162,7 +163,15 @@ public class MainViewModel : INotifyPropertyChanged
         set { _rdpWindowMinutes = value; OnPropertyChanged(); _analyzer.RdpWindowSeconds = value * 60; SaveSettings(); }
     }
 
-    public string AgentApiKey => SettingsService.Load().AgentApiKey;
+    public string AgentApiKey => _agentApiKey;
+
+    /// <summary>Start the Agent API and log the URL+key to the UI alert panel.</summary>
+    public void StartApi()
+    {
+        if (_agentApi == null) return;
+        var msg = _agentApi.Start();
+        OnError(msg);
+    }
 
     public ICommand StartCommand { get; }
     public ICommand StopCommand { get; }
@@ -224,7 +233,8 @@ public class MainViewModel : INotifyPropertyChanged
             SettingsService.Save(s);
         }
         _agentApi = new AgentApiService(this, s.AgentApiKey);
-        _agentApi.Start();
+        // Start called from Window_Loaded so Application.Current is ready for Dispatcher
+        _agentApiKey = s.AgentApiKey;
 
         _statsTimer = new DispatcherTimer
         {

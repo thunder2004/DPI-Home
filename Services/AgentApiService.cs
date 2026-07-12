@@ -36,14 +36,16 @@ public class AgentApiService : IDisposable
         _listener.Prefixes.Add($"http://127.0.0.1:{Port}/");
     }
 
-    public void Start()
+    /// <summary>
+    /// Starts the HTTP listener. Must be called after Application.Current is available
+    /// (e.g. from Window.Loaded), otherwise OnError() dispatcher will be null.
+    /// </summary>
+    public string Start()
     {
         _cts = new CancellationTokenSource();
         _listener.Start();
         _listenTask = Task.Run(() => Listen(_cts.Token));
-
-        // Log startup to UI
-        _vm.OnError($"🚀 Agent API listening on http://127.0.0.1:{Port}");
+        return $"🚀 Agent API listening on http://127.0.0.1:{Port} — key: {_apiKey}";
     }
 
     public void Stop()
