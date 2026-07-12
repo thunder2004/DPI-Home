@@ -132,7 +132,13 @@ public class MainViewModel : INotifyPropertyChanged
         BlockIpCommand = new AsyncRelayCommand<string>(BlockIp);
 
         _sniffer = CreateSniffer();
-        _analyzer = new TrafficAnalyzer();
+
+        // Контекст сети: свои подсети + WAN-IP. Без этого направление трафика
+        // (Inbound/Outbound/Internal) определяется неверно, что ломает детект.
+        // TODO: вынести подсети и WAN-IP в настройки UI.
+        var netCtx = NetworkContext.CreateDefault();
+        netCtx.Vantage = NetworkContext.CaptureVantage.Wan;
+        _analyzer = new TrafficAnalyzer(netCtx);
         _aggregator = new AlertAggregator();
 
         _analyzer.OnAlert += OnAlert;

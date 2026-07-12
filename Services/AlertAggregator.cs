@@ -116,8 +116,12 @@ public class AlertAggregator : IDisposable
 
     private static string BuildKey(Alert alert)
     {
-        // Группируем ТОЛЬКО по Src IP — все события от одного IP в одну карточку
-        return alert.SrcIp;
+        // System-события держим в одной служебной карточке.
+        if (alert.SrcIp == "system") return "system";
+        // Разделяем по IP + категории: разные типы атак от одного IP не сливаются
+        // в одну неинформативную карточку, но однотипный флуд остаётся сгруппирован.
+        var cat = string.IsNullOrEmpty(alert.Category) ? "?" : alert.Category;
+        return $"{alert.SrcIp}|{cat}";
     }
 
     public void Dispose()

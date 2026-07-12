@@ -3,18 +3,26 @@ using DPI_Home.Models;
 
 namespace DPI_Home.Services;
 
-public record ThreatSignature
-{
-    public string Name { get; init; } = string.Empty;
-    public string Category { get; init; } = string.Empty;
-    public ThreatLevel Level { get; init; } = ThreatLevel.Medium;
-    public string Description { get; init; } = string.Empty;
-    public Func<RawPacket, bool> Match { get; init; } = _ => false;
-}
-
+/// <summary>
+/// Анализатор трафика. Получает пакеты от парсера, прогоняет через сигнатуры и
+/// поведенческие детекторы, генерирует алерты.
+///
+/// Исправления по сравнению с оригиналом:
+///  - Направление трафика через NetworkContext (замена IsPrivateIp).
+///  - Port Scan: только реальные пробы (SYN/stealth/UDP), не любой пакет.
+///  - Brute Force: только SYN без ACK (активная сессия больше не триггерит).
+///  - SYN Flood: ключ по ЖЕРТВЕ, считаем уникальные источники (поддержка спуфинга).
+///  - Все состояния чистятся периодически (eviction), словари не растут бесконечно.
+///  - Сигнатуры вынесены в ThreatSignatures, состояния — в DetectionState.
+///  - Единая шкала Score через ThreatSignatures.ScoreFor.
+///  - Рейт-лимит сигнатурных алертов: один алерт на (srcIp|sig) за 5 секунд.
+///  - Фикс ошибки Now/UtcNow в очистке HTTPS-соединений.
+/// </summary>
 public class TrafficAnalyzer
 {
+    private readonly NetworkContext _net;
     private readonly List<ThreatSignature> _signatures;
+
     private readonly ConcurrentDictionary<string, PortScanState> _portScans = new();
     private readonly ConcurrentDictionary<string, BruteForceState> _bruteForce = new();
     private readonly ConcurrentDictionary<string, SynFloodState> _synFloods = new();
@@ -22,10 +30,19 @@ public class TrafficAnalyzer
     private readonly ConcurrentDictionary<string, HttpsServerGroup> _httpsServerGroups = new();
     private readonly object _httpsGroupLock = new();
 
-    private const int PortScanThreshold = 20;    // уникальных портов за WindowSeconds
-    private const int BruteForceThreshold = 10;  // новых попыток соединения (SYN) за WindowSeconds
-    private const int SynFloodThreshold = 100;   // SYN-пакетов за WindowSeconds
+    // Рейт-лимит: не чаще одного сигнатурного алерта на (srcIp|sig) за окно.
+    private readonly ConcurrentDictionary<string, DateTime> _sigRateLimit = new();
+    private static readonly TimeSpan SigRateLimitWindow = TimeSpan.FromSeconds(5);
+
+    private const int PortScanThreshold = 20;
+    private const int BruteForceThreshold = 10;
+    private const int SynFloodThreshold = 100;
+    private const int SynFloodSourceThreshold = 30; // уникальных источников — признак спуфинга
     private const int WindowSeconds = 10;
+
+    private DateTime _lastEviction = DateTime.UtcNow;
+    private static readonly TimeSpan EvictionInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan StateTtl = TimeSpan.FromMinutes(5);
 
     public event Action<Alert>? OnAlert;
     public event Action<HttpsConnection>? OnHttpsConnectionUpdate;
@@ -34,83 +51,109 @@ public class TrafficAnalyzer
     public IReadOnlyCollection<HttpsConnection> HttpsConnections =>
         _httpsConnections.Values.ToList().AsReadOnly();
 
-    public TrafficAnalyzer() => _signatures = LoadSignatures();
-
-    /// <summary>
-    /// Проверяет, является ли IP локальным (RFC 1918 + link-local + loopback).
-    /// Пакеты от таких IP в контексте WAN rx — это NAT-reflection или артефакты RouterOS.
-    /// </summary>
-    private static bool IsPrivateIp(string ip)
+    public TrafficAnalyzer(NetworkContext? net = null)
     {
-        if (string.IsNullOrEmpty(ip)) return false;
-        if (ip.StartsWith("10.")) return true;
-        if (ip.StartsWith("192.168.")) return true;
-        if (ip.StartsWith("127.")) return true;
-        if (ip.StartsWith("169.254.")) return true;
-        if (ip.StartsWith("172."))
-        {
-            var dotIdx = ip.IndexOf('.', 4);
-            if (dotIdx > 4 && int.TryParse(ip.AsSpan(4, dotIdx - 4), out int second) && second >= 16 && second <= 31)
-                return true;
-        }
-        return false;
+        _net = net ?? NetworkContext.CreateDefault();
+        _signatures = ThreatSignatures.LoadAll();
     }
-
-    /// <summary>
-    /// Возвращает true если TCP-флаги были реально считаны (пакет не truncated).
-    /// Пакет с TcpFlagsParsed=false не может использоваться для сигнатур на флаги.
-    /// </summary>
-    private static bool IsTcpFlagsParsed(RawPacket p)
-        => p.TcpFlagsParsed;
 
     public void Analyze(RawPacket packet)
     {
-        // Игнорируем локальные IP — NAT-reflection и артефакты RouterOS на WAN rx
-        if (IsPrivateIp(packet.SrcIp))
-            return;
+        // Направление трафика — единожды, осознанно (заменяет IsPrivateIp).
+        packet.Direction = _net.Classify(packet.SrcIp, packet.DstIp);
 
-        // Сигнатурный анализ
-        foreach (var sig in _signatures)
+        bool relevant = packet.Direction is TrafficDirection.Inbound or TrafficDirection.Internal;
+
+        if (relevant && packet.Protocol is "TCP" or "UDP" or "ICMP")
         {
-            if (sig.Match(packet))
-            {
-                EmitAlert(new Alert
-                {
-                    Timestamp = DateTime.Now,
-                    Level = sig.Level,
-                    Category = sig.Category,
-                    Title = sig.Name,
-                    ShortName = sig.Name,
-                    Description = sig.Description,
-                    SrcIp = packet.SrcIp,
-                    DstIp = packet.DstIp,
-                    SrcPort = packet.SrcPort,
-                    DstPort = packet.DstPort,
-                    Protocol = packet.Protocol,
-                    PacketCount = 1,
-                    Score = (int)sig.Level * 25,
-                    ScannedPorts = packet.DstPort > 0 ? new HashSet<int> { packet.DstPort } : new()
-                });
-            }
+            RunSignatures(packet);
+            DetectPortScan(packet);
+            DetectBruteForce(packet);
+            DetectSynFlood(packet);
         }
 
-        DetectPortScan(packet);
-        DetectBruteForce(packet);
-        DetectSynFlood(packet);
+        // HTTPS-трекинг ведём в обе стороны — иначе SYN-ACK не сопоставится.
         TrackHttpsConnection(packet);
+
+        MaybeEvict();
     }
 
+    // ── Сигнатурный анализ ──────────────────────────────────────────────────
+
+    private void RunSignatures(RawPacket packet)
+    {
+        foreach (var sig in _signatures)
+        {
+            if (!sig.Match(packet)) continue;
+            if (IsSigRateLimited(packet.SrcIp, sig.Name)) continue;
+
+            EmitAlert(new Alert
+            {
+                Timestamp = DateTime.Now,
+                Level = sig.Level,
+                Category = sig.Category,
+                Title = sig.Name,
+                ShortName = sig.Name,
+                Description = sig.Description,
+                SrcIp = packet.SrcIp,
+                DstIp = packet.DstIp,
+                SrcPort = packet.SrcPort,
+                DstPort = packet.DstPort,
+                Protocol = packet.Protocol,
+                PacketCount = 1,
+                Score = ThreatSignatures.ScoreFor(sig.Level),
+                ScannedPorts = packet.DstPort > 0 ? new HashSet<int> { packet.DstPort } : new()
+            });
+        }
+    }
+
+    private bool IsSigRateLimited(string srcIp, string sigName)
+    {
+        var key = $"{srcIp}|{sigName}";
+        var now = DateTime.UtcNow;
+        if (_sigRateLimit.TryGetValue(key, out var last) && now - last < SigRateLimitWindow)
+            return true;
+        _sigRateLimit[key] = now;
+        return false;
+    }
+
+    // ── Поведенческие детекторы ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Port Scan: только реальные пробы.
+    /// SYN без ACK, NULL/FIN/XMAS stealth, UDP-датаграммы — а не любой пакет.
+    /// Это устраняет false positive от занятого CDN, отвечающего на 20+ наших портов.
+    /// </summary>
     private void DetectPortScan(RawPacket packet)
     {
         if (string.IsNullOrEmpty(packet.SrcIp) || packet.DstPort == 0) return;
+        if (packet.IsNonFirstFragment) return;
+
+        bool isProbe;
+        if (packet.IsTcp && packet.TcpFlagsParsed)
+        {
+            bool syn = (packet.TcpFlags & 0x02) != 0;
+            bool ack = (packet.TcpFlags & 0x10) != 0;
+            bool stealth = packet.TcpFlags == 0x00
+                        || (packet.TcpFlags & 0x3F) == 0x01
+                        || ((packet.TcpFlags & 0x29) == 0x29 && (packet.TcpFlags & 0x14) == 0);
+            isProbe = (syn && !ack) || stealth;
+        }
+        else if (packet.IsUdp)
+        {
+            isProbe = true;
+        }
+        else return;
+
+        if (!isProbe) return;
 
         var state = _portScans.GetOrAdd(packet.SrcIp, _ => new PortScanState());
         lock (state)
         {
-            state.PurgeOld(WindowSeconds);
-            state.AddAttempt(packet.DstPort, packet.Timestamp);
-            int uniquePorts = state.UniquePortsInWindow(WindowSeconds);
-            if (uniquePorts >= PortScanThreshold)
+            state.Purge(WindowSeconds);
+            state.AddProbe(packet.DstPort, packet.Timestamp);
+            int unique = state.UniquePorts(WindowSeconds);
+            if (unique >= PortScanThreshold)
             {
                 EmitAlert(new Alert
                 {
@@ -119,26 +162,29 @@ public class TrafficAnalyzer
                     Category = "Port Scan",
                     Title = "Обнаружен порт-скан",
                     ShortName = "Port Scan",
-                    Description = $"IP {packet.SrcIp} сканирует порты: {uniquePorts} уникальных портов за {WindowSeconds}с",
+                    Description = $"IP {packet.SrcIp}: {unique} уникальных портов за {WindowSeconds}с",
                     SrcIp = packet.SrcIp,
                     DstIp = packet.DstIp,
                     Protocol = packet.Protocol,
-                    PacketCount = state.TotalAttempts,
-                    Score = 75,
-                    ScannedPorts = new HashSet<int>(state.GetPortsInWindow(WindowSeconds))
+                    PacketCount = state.TotalProbes,
+                    Score = ThreatSignatures.ScoreFor(ThreatLevel.High),
+                    ScannedPorts = state.Ports(WindowSeconds)
                 });
                 state.Reset();
             }
         }
     }
 
+    /// <summary>
+    /// Brute Force: только новые SYN (без ACK).
+    /// Иначе любая активная SSH/RDP-сессия (10+ пакетов за 10с) = Critical false positive.
+    /// </summary>
     private void DetectBruteForce(RawPacket packet)
     {
         if (string.IsNullOrEmpty(packet.SrcIp) || packet.DstPort == 0) return;
+        if (!packet.IsTcp || !packet.TcpFlagsParsed) return;
         if (packet.DstPort is not (22 or 3389 or 21 or 1433 or 3306 or 5432)) return;
 
-        // ── FIX: считаем только новые соединения (SYN без ACK), не все пакеты ──
-        // Без этого любая активная SSH/RDP-сессия (10+ пакетов за 10с) даёт false positive
         bool isSyn = (packet.TcpFlags & 0x02) != 0;
         bool isAck = (packet.TcpFlags & 0x10) != 0;
         if (!(isSyn && !isAck)) return;
@@ -147,18 +193,14 @@ public class TrafficAnalyzer
         var state = _bruteForce.GetOrAdd(key, _ => new BruteForceState());
         lock (state)
         {
-            state.PurgeOld(WindowSeconds);
+            state.Purge(WindowSeconds);
             state.AddAttempt(packet.Timestamp);
-            if (state.AttemptsInWindow(WindowSeconds) >= BruteForceThreshold)
+            if (state.InWindow(WindowSeconds) >= BruteForceThreshold)
             {
                 string portName = packet.DstPort switch
                 {
-                    22 => "SSH",
-                    3389 => "RDP",
-                    21 => "FTP",
-                    1433 => "MSSQL",
-                    3306 => "MySQL",
-                    5432 => "PostgreSQL",
+                    22 => "SSH", 3389 => "RDP", 21 => "FTP",
+                    1433 => "MSSQL", 3306 => "MySQL", 5432 => "PostgreSQL",
                     _ => $"{packet.DstPort}"
                 };
                 EmitAlert(new Alert
@@ -168,13 +210,13 @@ public class TrafficAnalyzer
                     Category = "Brute Force",
                     Title = $"Brute-force на {portName} (:{packet.DstPort})",
                     ShortName = $"BruteForce {portName}",
-                    Description = $"IP {packet.SrcIp} — {state.AttemptsInWindow(WindowSeconds)} попыток подключения за {WindowSeconds}с на {portName}",
+                    Description = $"IP {packet.SrcIp}: {state.InWindow(WindowSeconds)} попыток за {WindowSeconds}с на {portName}",
                     SrcIp = packet.SrcIp,
                     DstIp = packet.DstIp,
                     DstPort = packet.DstPort,
                     Protocol = packet.Protocol,
                     PacketCount = state.TotalAttempts,
-                    Score = 90,
+                    Score = ThreatSignatures.ScoreFor(ThreatLevel.Critical),
                     ScannedPorts = new HashSet<int> { packet.DstPort }
                 });
                 state.Reset();
@@ -182,37 +224,47 @@ public class TrafficAnalyzer
         }
     }
 
+    /// <summary>
+    /// SYN Flood: ключ — ЖЕРТВА (DstIp:DstPort), а не источник.
+    /// Считаем уникальные источники: много источников = спуфинг-флуд.
+    /// Раньше ключ был по SrcIp, который при спуфинге никогда не превышал порог.
+    /// </summary>
     private void DetectSynFlood(RawPacket packet)
     {
-        // ── FIX: детектируем SYN flood на ВСЕХ TCP-портах, не только 443 ──
-        if (packet.Protocol != "TCP" || packet.DstPort == 0) return;
+        if (!packet.IsTcp || packet.DstPort == 0 || !packet.TcpFlagsParsed) return;
         bool isSyn = (packet.TcpFlags & 0x02) != 0;
         bool isAck = (packet.TcpFlags & 0x10) != 0;
         if (!isSyn || isAck) return;
 
-        // Ключ по IP+порт: отдельное состояние для каждого атакуемого порта
-        var key = $"{packet.SrcIp}:{packet.DstPort}";
+        var key = $"{packet.DstIp}:{packet.DstPort}";
         var state = _synFloods.GetOrAdd(key, _ => new SynFloodState());
         lock (state)
         {
-            state.PurgeOld(WindowSeconds);
-            state.AddAttempt(packet.Timestamp);
-            if (state.AttemptsInWindow(WindowSeconds) >= SynFloodThreshold)
+            state.Purge(WindowSeconds);
+            state.AddSyn(packet.SrcIp, packet.Timestamp);
+
+            int syns = state.InWindow(WindowSeconds);
+            int sources = state.UniqueSources(WindowSeconds);
+
+            if (syns >= SynFloodThreshold)
             {
+                bool spoofed = sources >= SynFloodSourceThreshold;
                 EmitAlert(new Alert
                 {
                     Timestamp = DateTime.Now,
                     Level = ThreatLevel.Critical,
                     Category = "SYN Flood",
-                    Title = $"SYN Flood на порт {packet.DstPort}",
+                    Title = $"SYN Flood на {packet.DstIp}:{packet.DstPort}",
                     ShortName = $"SYN Flood :{packet.DstPort}",
-                    Description = $"IP {packet.SrcIp} — {state.AttemptsInWindow(WindowSeconds)} SYN-пакетов за {WindowSeconds}с на порт {packet.DstPort}",
+                    Description = spoofed
+                        ? $"{syns} SYN/{WindowSeconds}с от {sources} источников (спуфинг) → {packet.DstIp}:{packet.DstPort}"
+                        : $"{syns} SYN/{WindowSeconds}с от {sources} источников → {packet.DstIp}:{packet.DstPort}",
                     SrcIp = packet.SrcIp,
                     DstIp = packet.DstIp,
                     DstPort = packet.DstPort,
                     Protocol = "TCP",
-                    PacketCount = state.TotalAttempts,
-                    Score = 95,
+                    PacketCount = state.TotalSyns,
+                    Score = ThreatSignatures.ScoreFor(ThreatLevel.Critical),
                     ScannedPorts = new HashSet<int> { packet.DstPort }
                 });
                 state.Reset();
@@ -220,9 +272,11 @@ public class TrafficAnalyzer
         }
     }
 
+    // ── HTTPS-трекинг ───────────────────────────────────────────────────────
+
     private void TrackHttpsConnection(RawPacket packet)
     {
-        if (packet.Protocol != "TCP") return;
+        if (!packet.IsTcp || !packet.TcpFlagsParsed) return;
         if (packet.DstPort != 443 && packet.SrcPort != 443) return;
 
         bool isSyn = (packet.TcpFlags & 0x02) != 0;
@@ -232,27 +286,23 @@ public class TrafficAnalyzer
 
         string clientIp, serverIp;
         int clientPort;
-
         if (packet.DstPort == 443)
         {
-            clientIp = packet.SrcIp;
-            clientPort = packet.SrcPort;
-            serverIp = packet.DstIp;
+            clientIp = packet.SrcIp; clientPort = packet.SrcPort; serverIp = packet.DstIp;
         }
         else
         {
-            clientIp = packet.DstIp;
-            clientPort = packet.DstPort;
-            serverIp = packet.SrcIp;
+            clientIp = packet.DstIp; clientPort = packet.DstPort; serverIp = packet.SrcIp;
         }
 
         var connKey = $"{clientIp}:{clientPort}->{serverIp}:443";
 
         if (isSyn && !isAck)
         {
+            // Используем UtcNow — согласовано с eviction-логикой (была ошибка Now vs UtcNow).
             var conn = _httpsConnections.GetOrAdd(connKey, _ => new HttpsConnection
             {
-                Timestamp = DateTime.Now,
+                Timestamp = DateTime.UtcNow,
                 SrcIp = packet.SrcIp,
                 DstIp = packet.DstIp,
                 SrcPort = packet.SrcPort,
@@ -280,6 +330,7 @@ public class TrafficAnalyzer
             if (_httpsConnections.TryGetValue(connKey, out var conn))
             {
                 conn.State = ConnectionState.Closed;
+                conn.Timestamp = DateTime.UtcNow;
                 conn.PacketCount++;
                 conn.BytesTransferred += packet.PacketLength;
                 OnHttpsConnectionUpdate?.Invoke(conn);
@@ -303,8 +354,7 @@ public class TrafficAnalyzer
             foreach (var k in _httpsConnections.Keys)
             {
                 if (_httpsConnections.TryGetValue(k, out var c) &&
-                    c.State == ConnectionState.Closed &&
-                    c.Timestamp < cutoff)
+                    c.State == ConnectionState.Closed && c.Timestamp < cutoff)
                 {
                     cleanedServers.Add(c.SrcIp);
                     cleanedServers.Add(c.DstIp);
@@ -327,111 +377,50 @@ public class TrafficAnalyzer
         lock (_httpsGroupLock)
         {
             group.LastSeen = DateTime.Now;
-            var connectionsToServer = _httpsConnections.Values
+            var conns = _httpsConnections.Values
                 .Where(c => c.DstIp == serverIp || c.SrcIp == serverIp)
                 .ToList();
 
-            group.TotalConnections = connectionsToServer.Count;
-            group.EstablishedCount = connectionsToServer.Count(c => c.State == ConnectionState.Established);
-            group.SynSentCount = connectionsToServer.Count(c => c.State == ConnectionState.SynSent);
-            group.ClosedCount = connectionsToServer.Count(c => c.State == ConnectionState.Closed);
-            group.TotalPackets = connectionsToServer.Sum(c => c.PacketCount);
-            group.TotalBytes = connectionsToServer.Sum(c => c.BytesTransferred);
+            group.TotalConnections = conns.Count;
+            group.EstablishedCount = conns.Count(c => c.State == ConnectionState.Established);
+            group.SynSentCount = conns.Count(c => c.State == ConnectionState.SynSent);
+            group.ClosedCount = conns.Count(c => c.State == ConnectionState.Closed);
+            group.TotalPackets = conns.Sum(c => c.PacketCount);
+            group.TotalBytes = conns.Sum(c => c.BytesTransferred);
         }
 
         OnHttpsServerGroupUpdate?.Invoke(group);
     }
 
-    private void EmitAlert(Alert alert) => OnAlert?.Invoke(alert);
+    // ── Eviction — периодическая чистка протухших состояний ────────────────
 
-    private static List<ThreatSignature> LoadSignatures() => new()
+    private void MaybeEvict()
     {
-        // ─── TCP Scan Signatures — используем TcpFlags + TcpFlagsParsed ───
+        var now = DateTime.UtcNow;
+        if (now - _lastEviction < EvictionInterval) return;
+        _lastEviction = now;
 
-        // NULL Scan: все флаги нулевые. Только если флаги были реально считаны из пакета.
-        new() { Name = "NULL Scan", Category = "Recon", Level = ThreatLevel.High,
-            Description = "TCP NULL Scan — пакет без каких-либо флагов (FIN/SYN/RST/PSH/ACK/URG=0)",
-            Match = p => p.Protocol == "TCP" && p.TcpFlagsParsed && p.TcpFlags == 0x00 && p.DstPort > 0 },
+        foreach (var kv in _portScans)
+            if (kv.Value.IsStale(StateTtl)) _portScans.TryRemove(kv.Key, out _);
 
-        // XMAS Scan: FIN(1)+PSH(8)+URG(32)=0x29, без SYN и ACK
-        new() { Name = "XMAS Scan", Category = "Recon", Level = ThreatLevel.High,
-            Description = "TCP XMAS Scan — одновременно установлены FIN+PSH+URG флаги",
-            Match = p => p.Protocol == "TCP" && p.TcpFlagsParsed && (p.TcpFlags & 0x29) == 0x29 && (p.TcpFlags & 0x12) == 0 },
+        foreach (var kv in _bruteForce)
+            if (kv.Value.IsStale(StateTtl)) _bruteForce.TryRemove(kv.Key, out _);
 
-        // FIN Scan: только FIN, без других флагов
-        new() { Name = "FIN Scan", Category = "Recon", Level = ThreatLevel.Medium,
-            Description = "TCP FIN Scan — только FIN флаг, без SYN/ACK/RST",
-            Match = p => p.Protocol == "TCP" && p.TcpFlagsParsed && (p.TcpFlags & 0x3F) == 0x01 },
+        foreach (var kv in _synFloods)
+            if (kv.Value.IsStale(StateTtl)) _synFloods.TryRemove(kv.Key, out _);
 
-        // ─── Exploit Signatures ───
+        var rlCutoff = now - StateTtl;
+        foreach (var kv in _sigRateLimit)
+            if (kv.Value < rlCutoff) _sigRateLimit.TryRemove(kv.Key, out _);
 
-        // EternalBlue: SMB1 magic \xFF SMB в первых 128 байтах payload
-        // FIX: проверяем PayloadRaw напрямую, не обрезанный PayloadHex
-        new() { Name = "EternalBlue", Category = "Exploit", Level = ThreatLevel.Critical,
-            Description = "EternalBlue/MS17-010 — SMB1 эксплойт на порт 445",
-            Match = p => p.DstPort == 445 && p.PayloadRaw.Length > 60 &&
-                         ContainsBytes(p.PayloadRaw, new byte[] { 0xFF, 0x53, 0x4D, 0x42 }) },  // \xFFSMB
-
-        // ─── C2/Tunnel Signatures ───
-
-        // DNS Tunneling: только UDP DNS > 512 байт (TCP DNS — норма для zone transfer / DNSSEC)
-        new() { Name = "DNS Tunneling", Category = "C2/Tunnel", Level = ThreatLevel.High,
-            Description = "UDP DNS-запрос > 512 байт — возможный DNS-туннель (EDNS0 limit)",
-            Match = p => p.DstPort == 53 && p.Protocol == "UDP" && p.PacketLength > 512 },
-
-        // ICMP Tunneling: payload > 1000 байт — аномальный ICMP
-        new() { Name = "ICMP Tunneling", Category = "C2/Tunnel", Level = ThreatLevel.High,
-            Description = "Аномально большой ICMP-пакет (>1000 байт) — возможный туннель",
-            Match = p => p.Protocol == "ICMP" && p.PacketLength > 1000 },
-    };
-
-    /// <summary>
-    /// Поиск последовательности байт в массиве (аналог Contains для byte[]).
-    /// Используется вместо PayloadHex.Contains, который обрезан до 64 байт.
-    /// </summary>
-    private static bool ContainsBytes(byte[] data, byte[] pattern)
-    {
-        int limit = Math.Min(data.Length - pattern.Length + 1, 256); // первые 256 байт
-        for (int i = 0; i < limit; i++)
+        foreach (var kv in _httpsServerGroups)
         {
-            bool found = true;
-            for (int j = 0; j < pattern.Length; j++)
-            {
-                if (data[i + j] != pattern[j]) { found = false; break; }
-            }
-            if (found) return true;
+            var g = kv.Value;
+            if (g.EstablishedCount == 0 && g.SynSentCount == 0 &&
+                (now - g.LastSeen.ToUniversalTime()) > StateTtl)
+                _httpsServerGroups.TryRemove(kv.Key, out _);
         }
-        return false;
     }
 
-    private class PortScanState
-    {
-        private readonly List<(int Port, DateTime Time)> _attempts = new();
-        public long TotalAttempts { get; private set; }
-        public void AddAttempt(int port, DateTime time) { _attempts.Add((port, time)); TotalAttempts++; }
-        public int UniquePortsInWindow(int s) { var c = DateTime.UtcNow.AddSeconds(-s); return _attempts.Where(a => a.Time > c).Select(a => a.Port).Distinct().Count(); }
-        public List<int> GetPortsInWindow(int s) { var c = DateTime.UtcNow.AddSeconds(-s); return _attempts.Where(a => a.Time > c).Select(a => a.Port).Distinct().OrderBy(p => p).ToList(); }
-        public void PurgeOld(int s) { var c = DateTime.UtcNow.AddSeconds(-s * 3); _attempts.RemoveAll(a => a.Time < c); }
-        public void Reset() { _attempts.Clear(); }
-    }
-
-    private class BruteForceState
-    {
-        private readonly List<DateTime> _attempts = new();
-        public long TotalAttempts { get; private set; }
-        public void AddAttempt(DateTime time) { _attempts.Add(time); TotalAttempts++; }
-        public int AttemptsInWindow(int s) { var c = DateTime.UtcNow.AddSeconds(-s); return _attempts.Count(a => a > c); }
-        public void PurgeOld(int s) { var c = DateTime.UtcNow.AddSeconds(-s * 3); _attempts.RemoveAll(a => a < c); }
-        public void Reset() { _attempts.Clear(); }
-    }
-
-    private class SynFloodState
-    {
-        private readonly List<DateTime> _attempts = new();
-        public long TotalAttempts { get; private set; }
-        public void AddAttempt(DateTime time) { _attempts.Add(time); TotalAttempts++; }
-        public int AttemptsInWindow(int s) { var c = DateTime.UtcNow.AddSeconds(-s); return _attempts.Count(a => a > c); }
-        public void PurgeOld(int s) { var c = DateTime.UtcNow.AddSeconds(-s * 3); _attempts.RemoveAll(a => a < c); }
-        public void Reset() { _attempts.Clear(); }
-    }
+    private void EmitAlert(Alert alert) => OnAlert?.Invoke(alert);
 }
