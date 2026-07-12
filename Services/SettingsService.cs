@@ -31,9 +31,10 @@ public class AppSettings
 
 public static class SettingsService
 {
+    // Next to the executable, not %AppData% — by user request, all DPI-Home config/logs
+    // live in one place (the app's own folder) instead of scattered across the profile.
     private static readonly string SettingsPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "DPI-Home", "settings.json");
+        AppContext.BaseDirectory, "settings.json");
 
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 

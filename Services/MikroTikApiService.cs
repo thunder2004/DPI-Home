@@ -18,9 +18,9 @@ namespace DPI_Home.Services;
 /// </summary>
 public static class MikroTikDebugLog
 {
+    // Next to the executable, not %AppData% — all DPI-Home config/logs in one place.
     public static readonly string LogPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "DPI-Home", "mikrotik-debug.log");
+        AppContext.BaseDirectory, "mikrotik-debug.log");
 
     private static readonly object Lock = new();
 

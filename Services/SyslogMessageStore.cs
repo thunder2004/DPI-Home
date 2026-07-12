@@ -26,12 +26,11 @@ public static class SyslogMessageStore
     private const int MaxInMemory = 1000;
     private static readonly ConcurrentQueue<SyslogMessageEntry> Buffer = new();
 
-    // Runtime data (not config), so %AppData% like the other logs/settings — separate
-    // file from mikrotik-debug.log so it's not mixed in with unrelated MikroTik HTTP
-    // traffic and stays easy for a script/agent to parse (JSON Lines: one object per line).
+    // Next to the executable, not %AppData% — all DPI-Home config/logs in one place.
+    // Separate file from mikrotik-debug.log so it's not mixed in with unrelated MikroTik
+    // HTTP traffic and stays easy for a script/agent to parse (JSON Lines: one object per line).
     private static readonly string LogPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "DPI-Home", "syslog-messages.log");
+        AppContext.BaseDirectory, "syslog-messages.log");
 
     private static readonly object FileLock = new();
     private static readonly JsonSerializerOptions JsonOpts = new();

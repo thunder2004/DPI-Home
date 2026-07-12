@@ -10,9 +10,9 @@ namespace DPI_Home.Services;
 /// </summary>
 public static class AlertHistoryService
 {
+    // Next to the executable, not %AppData% — all DPI-Home config/logs in one place.
     private static readonly string HistoryPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "DPI-Home", "alert-history.json");
+        AppContext.BaseDirectory, "alert-history.json");
 
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = false };
 
