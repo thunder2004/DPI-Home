@@ -117,6 +117,8 @@ public class AgentApiService : IDisposable
                 var p when p.StartsWith("/api/syslog-patterns/") && method == "DELETE" =>
                     (RemoveSyslogPattern(p["/api/syslog-patterns/".Length..]), 200),
 
+                "/api/syslog-messages" when method == "GET" => (GetSyslogMessages(ctx), 200),
+
                 _ => ("{\"error\":\"Not Found\"}", 404)
             };
         }
@@ -389,6 +391,23 @@ public class AgentApiService : IDisposable
         name = Uri.UnescapeDataString(name);
         bool removed = _vm.RemoveSyslogPattern(name);
         return JsonSerializer.Serialize(new { removed, name });
+    }
+
+    /// <summary>
+    /// Returns recent raw syslog lines, matched or not — this is the actual feed for an
+    /// agent hunting for new attack patterns, since a confirmed alert (GET /api/alerts)
+    /// by definition already matched something known. Query params: limit (default 100,
+    /// max 1000), unmatchedOnly=true to see only lines that didn't trip any pattern yet.
+    /// </summary>
+    private string GetSyslogMessages(HttpListenerContext ctx)
+    {
+        int limit = 100;
+        if (int.TryParse(ctx.Request.QueryString["limit"], out var l) && l > 0)
+            limit = Math.Min(l, 1000);
+        bool unmatchedOnly = ctx.Request.QueryString["unmatchedOnly"] == "true";
+
+        var messages = SyslogMessageStore.GetRecent(limit, unmatchedOnly);
+        return JsonSerializer.Serialize(new { messages, total = messages.Count, unmatchedOnly });
     }
 
     /// <summary>

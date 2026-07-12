@@ -529,6 +529,18 @@ public class MainViewModel : INotifyPropertyChanged
         MikroTikDebugLog.Log($"[SYSLOG] {rawMessage}");
 
         var alert = SyslogAnalyzer.Analyze(rawMessage, _syslogPatterns);
+
+        // Record EVERY raw message, matched or not — an agent hunting for new attack
+        // patterns needs exactly the ones that DIDN'T match anything yet, not just
+        // confirmed alerts. Exposed via GET /api/syslog-messages.
+        SyslogMessageStore.Add(new SyslogMessageEntry
+        {
+            Timestamp = DateTime.Now,
+            RawMessage = rawMessage,
+            Matched = alert != null,
+            PatternName = alert?.Title
+        });
+
         if (alert == null) return;
 
         var key = $"{alert.SrcIp}|{alert.Category}";
