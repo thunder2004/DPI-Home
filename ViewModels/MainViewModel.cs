@@ -14,6 +14,7 @@ public class MainViewModel : INotifyPropertyChanged
 {
     private MikroTikSnifferService _sniffer;
     private readonly TrafficAnalyzer _analyzer;
+    private readonly NetworkContext _netCtx;
     private readonly AlertAggregator _aggregator;
     private readonly DispatcherTimer _statsTimer;
     private readonly object _httpsLock = new();
@@ -34,6 +35,12 @@ public class MainViewModel : INotifyPropertyChanged
     private string _mikrotikPassword = "";
     private bool _mikrotikConnected;
     private MikroTikApiService? _mikrotikApi;
+
+    // WAN IP (публичный адрес роутера). Без него NetworkContext не может отличить
+    // "наш публичный сервис" от постороннего трафика — весь инбаунд на наш WAN-IP
+    // получает Direction=Unknown и не доходит до детекторов (в т.ч. SYN Flood).
+    // Заполняется автоматически при подключении к MikroTik (через IP Cloud) либо вручную.
+    private string _wanIp = "";
 
     public ObservableCollection<AlertGroup> AlertGroups { get; } = new();
     public ObservableCollection<HttpsServerGroup> HttpsServerGroups { get; } = new();
@@ -117,10 +124,17 @@ public class MainViewModel : INotifyPropertyChanged
         set { _mikrotikConnected = value; OnPropertyChanged(); }
     }
 
+    public string WanIp
+    {
+        get => _wanIp;
+        set { _wanIp = value; OnPropertyChanged(); }
+    }
+
     public ICommand StartCommand { get; }
     public ICommand StopCommand { get; }
     public ICommand ClearLogCommand { get; }
     public ICommand ConnectMikrotikCommand { get; }
+    public ICommand ApplyWanIpCommand { get; }
         public ICommand BlockIpCommand { get; }
 
         public MainViewModel()
@@ -129,16 +143,18 @@ public class MainViewModel : INotifyPropertyChanged
         StopCommand = new RelayCommand(Stop);
         ClearLogCommand = new RelayCommand(ClearLog);
         ConnectMikrotikCommand = new AsyncRelayCommand(ConnectMikrotikAsync);
+        ApplyWanIpCommand = new RelayCommand(ApplyWanIpManual);
         BlockIpCommand = new AsyncRelayCommand<string>(BlockIp);
 
         _sniffer = CreateSniffer();
 
-        // Контекст сети: свои подсети + WAN-IP. Без этого направление трафика
-        // (Inbound/Outbound/Internal) определяется неверно, что ломает детект.
-        // TODO: вынести подсети и WAN-IP в настройки UI.
-        var netCtx = NetworkContext.CreateDefault();
-        netCtx.Vantage = NetworkContext.CaptureVantage.Wan;
-        _analyzer = new TrafficAnalyzer(netCtx);
+        // Контекст сети: свои подсети + WAN-IP. Без WAN-IP пакеты, адресованные на наш
+        // публичный адрес, получают Direction=Unknown и не доходят до детекторов —
+        // WAN-IP подставляется автоматически при подключении к MikroTik (см. ConnectMikrotikAsync)
+        // либо вручную через WanIp/ApplyWanIpCommand.
+        _netCtx = NetworkContext.CreateDefault();
+        _netCtx.Vantage = NetworkContext.CaptureVantage.Wan;
+        _analyzer = new TrafficAnalyzer(_netCtx);
         _aggregator = new AlertAggregator();
 
         _analyzer.OnAlert += OnAlert;
@@ -210,6 +226,21 @@ public class MainViewModel : INotifyPropertyChanged
 
                 MikrotikConnected = true;
                 OnError($"✅ MikroTik API: подключено к {_mikrotikHost}");
+
+                // Автоопределение WAN-IP через IP Cloud. Без него весь трафик, адресованный
+                // на наш публичный адрес (например, атака на проброшенный из WAN сервис),
+                // классифицируется как Direction=Unknown и не доходит до детекторов.
+                var (wanIp, wanErr) = await _mikrotikApi.GetWanIpAsync();
+                if (wanIp != null)
+                {
+                    _netCtx.AddWanIp(wanIp);
+                    WanIp = wanIp;
+                    OnError($"🌐 WAN-IP определён автоматически: {wanIp} — детект теперь покрывает входящий трафик на этот адрес");
+                }
+                else
+                {
+                    OnError($"⚠️ Не удалось определить WAN-IP автоматически ({wanErr}). Введите его вручную в поле WAN IP, иначе входящие атаки на публичный адрес не будут обнаруживаться");
+                }
             }
             else
             {
@@ -222,6 +253,19 @@ public class MainViewModel : INotifyPropertyChanged
             MikrotikConnected = false;
             OnError($"❌ MikroTik API: {ex.Message}");
         }
+    }
+
+    /// <summary>Ручное применение WAN-IP (фолбэк, если IP Cloud недоступен/выключен на роутере).</summary>
+    public void ApplyWanIpManual()
+    {
+        if (string.IsNullOrWhiteSpace(_wanIp))
+        {
+            OnError("⚠️ Введите WAN-IP перед применением");
+            return;
+        }
+
+        _netCtx.AddWanIp(_wanIp.Trim());
+        OnError($"🌐 WAN-IP применён вручную: {_wanIp.Trim()} — детект теперь покрывает входящий трафик на этот адрес");
     }
 
     /// <summary>
