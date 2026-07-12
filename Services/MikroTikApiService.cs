@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Security.Authentication;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -71,7 +72,23 @@ public class MikroTikApiService
         _username = username;
         _password = password;
 
-        _http = new HttpClient
+        // ВАЖНО: раньше здесь стоял ServicePointManager.ServerCertificateValidationCallback —
+        // это устаревший API, который в современном .NET (Core/5+) НЕ действует на HttpClient
+        // (там под капотом SocketsHttpHandler, а не старый ServicePoint-стек). Обход
+        // самоподписанного сертификата MikroTik делаем через HttpClientHandler — это
+        // единственный способ, реально работающий для HttpClient в текущем .NET.
+        //
+        // Также явно фиксируем TLS 1.2: у RouterOS TLS-стек часто поддерживает только его,
+        // а .NET по умолчанию пытается договориться на TLS 1.3/системных наборах шифров и
+        // иногда промахивается — отсюда наблюдавшиеся ИНОГДА успешные, ИНОГДА падающие
+        // с "HandshakeFailure" попытки подключения.
+        var handler = new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback = (_, _, _, _) => true,
+            SslProtocols = SslProtocols.Tls12
+        };
+
+        _http = new HttpClient(handler)
         {
             BaseAddress = new Uri($"https://{host}/rest/"),
             Timeout = TimeSpan.FromSeconds(10)
@@ -79,10 +96,8 @@ public class MikroTikApiService
 
         var auth = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{username}:{password}"));
         _http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", auth);
-        // Отключаем проверку SSL (самоподписанный сертификат MikroTik)
-        ServicePointManager.ServerCertificateValidationCallback = delegate { return true; };
 
-        MikroTikDebugLog.Log($"=== Новая сессия MikroTikApiService, BaseAddress={_http.BaseAddress}, user={username} ===");
+        MikroTikDebugLog.Log($"=== Новая сессия MikroTikApiService, BaseAddress={_http.BaseAddress}, user={username}, TLS=1.2 (принудительно) ===");
     }
 
     /// <summary>
