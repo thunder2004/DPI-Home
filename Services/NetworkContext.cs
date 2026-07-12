@@ -82,6 +82,9 @@ public class NetworkContext
         IpToUint("1.1.1.2"), IpToUint("1.0.0.2"),
         // NTP pool (often triggers on large packets)
         IpToUint("129.6.15.28"), IpToUint("129.6.15.29"),  // time.nist.gov
+        // Apple DNS
+        IpToUint("17.253.144.10"), IpToUint("17.253.144.11"),
+        IpToUint("17.253.144.254"),
     };
 
     private static uint IpToUint(string ip)

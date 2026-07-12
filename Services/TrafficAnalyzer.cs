@@ -83,12 +83,20 @@ public class TrafficAnalyzer
         // Traffic direction — once, deliberately (replaces IsPrivateIp).
         packet.Direction = _net.Classify(packet.SrcIp, packet.DstIp);
 
+        // ponytail: skip all detectors for well-known service IPs (Google DNS, Apple DNS,
+        // Cloudflare, etc.) — they trigger false DNS/ICMP tunneling and port scan alerts.
+        // Alerts are noise; auto-block was already suppressed, but the alerts flooded the UI.
+        if (_net.IsWellKnown(packet.SrcIp) || _net.IsWellKnown(packet.DstIp))
+        {
+            TrackHttpsConnection(packet);
+            MaybeEvict();
+            return;
+        }
+
         bool relevant = packet.Direction is TrafficDirection.Inbound or TrafficDirection.Internal;
 
         if (relevant && packet.Protocol is "TCP" or "UDP" or "ICMP")
         {
-            RunSignatures(packet);
-            DetectPortScan(packet);
             DetectBruteForce(packet);
             DetectSynFlood(packet);
             DetectRdpBruteForce(packet);
