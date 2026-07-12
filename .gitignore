@@ -44,6 +44,9 @@ bld/
 .DS_Store
 Thumbs.db
 
+## Publish output
+publish/
+
 ## Scratch files (temp commit messages etc.)
 _commit_msg.txt
 .git_commit_msg.txt
