@@ -1,0 +1,16 @@
+Make firewall rule existence check robust against query-filter quirks
+
+EnsureFirewallRuleAsync's GET check relied on RouterOS server-side
+query filtering by src-address-list. If the router doesn't support
+filtering by that specific property (or silently ignores an
+unrecognized query param while still applying chain/action), the
+check could return ANY existing chain=forward action=drop rule -
+including totally unrelated ones a user already has (blocking ports,
+bogons, etc.) - and incorrectly conclude "our rule already exists",
+skipping creation entirely.
+
+Fix: query only by chain=forward&action=drop (universally supported
+basic fields), then filter the returned list client-side in C# by
+checking each rule's SrcAddressList == "DPI-Home-Blocked". Removes
+the dependency on how the router's REST API handles filtering by a
+less common property.
