@@ -371,6 +371,21 @@ public class MainViewModel : INotifyPropertyChanged
         }
     }
 
+    /// <summary>Opens a file with its default associated app; falls back to Notepad if the
+    /// extension has no association (common for .json — Windows doesn't ship one out of
+    /// the box, so ShellExecute throws "Приложение не найдено"). Notepad is always present.</summary>
+    private static void OpenInEditor(string path)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+        }
+        catch
+        {
+            Process.Start(new ProcessStartInfo("notepad.exe", $"\"{path}\"") { UseShellExecute = true });
+        }
+    }
+
     /// <summary>Opens the syslog-patterns.json file (creates it with the built-in defaults
     /// if it doesn't exist yet) — edit it directly, or add/remove patterns via the Agent API;
     /// either way the running app picks up the change without a restart.</summary>
@@ -381,7 +396,7 @@ public class MainViewModel : INotifyPropertyChanged
             if (!File.Exists(SyslogPatternStore.PatternsPath))
                 SyslogPatternStore.Save(SyslogPatternStore.Load());
 
-            Process.Start(new ProcessStartInfo(SyslogPatternStore.PatternsPath) { UseShellExecute = true });
+            OpenInEditor(SyslogPatternStore.PatternsPath);
         }
         catch (Exception ex)
         {
@@ -430,7 +445,7 @@ public class MainViewModel : INotifyPropertyChanged
             if (!File.Exists(path))
                 File.WriteAllText(path, "Log is empty — perform an action with MikroTik (connect, block) to see entries here.\r\n");
 
-            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            OpenInEditor(path);
         }
         catch (Exception ex)
         {
