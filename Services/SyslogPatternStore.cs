@@ -11,12 +11,15 @@ namespace DPI_Home.Services;
 /// syslog feed) spots a new probe pattern that isn't caught yet, it can be added here —
 /// by hand, or via the Agent API (POST /api/syslog-patterns) — and DPI-Home picks it up
 /// without a rebuild or even a restart, because the file is watched for changes.
+///
+/// Stored next to the executable (AppContext.BaseDirectory), not in %AppData% — unlike
+/// settings.json/logs (which are per-user runtime state), this is effectively a config
+/// file for the app itself, and belongs alongside it so it's easy to find and edit.
 /// </summary>
 public static class SyslogPatternStore
 {
     public static readonly string PatternsPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "DPI-Home", "syslog-patterns.json");
+        AppContext.BaseDirectory, "syslog-patterns.json");
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
