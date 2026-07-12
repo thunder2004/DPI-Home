@@ -182,7 +182,6 @@ public class MainViewModel : INotifyPropertyChanged
         var settings = SettingsService.Load();
         _mikrotikHost = settings.MikrotikHost;
         _mikrotikUser = settings.MikrotikUser;
-        _mikrotikPassword = settings.MikrotikPassword;
         _listenPort = settings.ListenPort;
         _autoBlockEnabled = settings.AutoBlockEnabled;
         _rdpThreshold = settings.RdpThreshold;
@@ -246,7 +245,6 @@ public class MainViewModel : INotifyPropertyChanged
         {
             MikrotikHost = _mikrotikHost,
             MikrotikUser = _mikrotikUser,
-            MikrotikPassword = _mikrotikPassword,
             WanIp = _wanIp,
             AutoBlockEnabled = _autoBlockEnabled,
             ListenPort = _listenPort,

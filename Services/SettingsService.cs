@@ -5,17 +5,12 @@ namespace DPI_Home.Services;
 
 /// <summary>
 /// Application settings persisted between launches.
-///
-/// IMPORTANT: MikrotikPassword is stored in plain text in a JSON file
-/// in the user profile. This is a deliberate trade-off for a home tool —
-/// don't use a password that matters elsewhere, and be aware that any
-/// process with access to your Windows profile can read it.
+/// Password is NOT persisted — enter it each session.
 /// </summary>
 public class AppSettings
 {
     public string MikrotikHost { get; set; } = "192.168.105.1";
     public string MikrotikUser { get; set; } = "admin";
-    public string MikrotikPassword { get; set; } = "";
     public string WanIp { get; set; } = "";
     public bool AutoBlockEnabled { get; set; }
     public int ListenPort { get; set; } = 37008;
