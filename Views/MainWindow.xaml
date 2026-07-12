@@ -175,6 +175,14 @@
                             materialDesign:ButtonAssist.CornerRadius="6"
                             Margin="8,4,0,4" Cursor="Hand"
                             ToolTip="Open detailed HTTP exchange log with MikroTik (requests, responses, errors) — for diagnostics if rules/blocks don't appear on the router"/>
+
+                    <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="8,4,0,4"
+                            ToolTip="Agent API key — use header X-API-Key when calling http://127.0.0.1:37409">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="🔑" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                            <TextBlock Text="{Binding AgentApiKey}" FontSize="10" Foreground="#66BB6A" FontFamily="Consolas" VerticalAlignment="Center" MaxWidth="160" TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+                    </Border>
                 </WrapPanel>
             </Grid>
         </Border>

@@ -233,8 +233,9 @@ public class MainViewModel : INotifyPropertyChanged
             SettingsService.Save(s);
         }
         _agentApi = new AgentApiService(this, s.AgentApiKey);
-        // Start called from Window_Loaded so Application.Current is ready for Dispatcher
         _agentApiKey = s.AgentApiKey;
+        // ponytail: ensure key is persisted before Window_Loaded fires (save is idempotent)
+        SettingsService.Save(s);
 
         _statsTimer = new DispatcherTimer
         {
