@@ -54,6 +54,14 @@ public class MainViewModel : INotifyPropertyChanged
     private readonly ConcurrentDictionary<string, DateTime> _autoBlockAttempts = new();
     private static readonly TimeSpan AutoBlockCooldown = TimeSpan.FromHours(24); // matches MikroTik block duration
 
+    // Alert history persistence: the Event Feed used to live only in memory and vanish
+    // on every restart. Saved periodically (see _historyTimer) while dirty, and once
+    // more on app shutdown (see MainWindow.xaml.cs Closing handler) to catch anything
+    // since the last periodic save.
+    private readonly DispatcherTimer _historyTimer;
+    private volatile bool _historyDirty;
+    private static readonly TimeSpan HistorySaveInterval = TimeSpan.FromSeconds(10);
+
     public ObservableCollection<AlertGroup> AlertGroups { get; } = new();
     public ObservableCollection<HttpsServerGroup> HttpsServerGroups { get; } = new();
 
@@ -268,6 +276,15 @@ public class MainViewModel : INotifyPropertyChanged
         };
         _statsTimer.Tick += UpdateStats;
         _statsTimer.Start();
+
+        // Restore Event Feed history from disk (saved newest-first, same order as
+        // AlertGroups is normally maintained via Insert(0, ...)).
+        foreach (var g in AlertHistoryService.Load())
+            AlertGroups.Add(g);
+
+        _historyTimer = new DispatcherTimer { Interval = HistorySaveInterval };
+        _historyTimer.Tick += (_, _) => SaveHistoryIfDirty();
+        _historyTimer.Start();
     }
 
     /// <summary>Copies the Agent API key to the clipboard.</summary>
@@ -320,6 +337,22 @@ public class MainViewModel : INotifyPropertyChanged
         });
     }
 
+    /// <summary>Saves alert history to disk if it changed since the last save (called by the periodic timer).</summary>
+    private void SaveHistoryIfDirty()
+    {
+        if (!_historyDirty) return;
+        _historyDirty = false;
+        AlertHistoryService.Save(AlertGroups.ToList());
+    }
+
+    /// <summary>Forces an immediate save regardless of the dirty flag — used on app shutdown
+    /// to catch anything since the last periodic save.</summary>
+    public void SaveHistoryNow()
+    {
+        _historyDirty = false;
+        AlertHistoryService.Save(AlertGroups.ToList());
+    }
+
     private MikroTikSnifferService CreateSniffer()
     {
         var s = new MikroTikSnifferService(_listenPort);
@@ -354,6 +387,7 @@ public class MainViewModel : INotifyPropertyChanged
             _aggregator.FlushAll();
             AlertGroups.Clear();
         });
+        SaveHistoryNow(); // persist the clear immediately, don't wait for the periodic timer
     }
 
     /// <summary>
@@ -542,6 +576,7 @@ public class MainViewModel : INotifyPropertyChanged
             while (AlertGroups.Count > 200)
                 AlertGroups.RemoveAt(AlertGroups.Count - 1);
         });
+        _historyDirty = true;
     }
 
     private void OnHttpsServerGroupUpdate(HttpsServerGroup group)

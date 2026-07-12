@@ -9,6 +9,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         Loaded += Window_Loaded;
+        Closing += Window_Closing;
     }
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
@@ -17,6 +18,14 @@ public partial class MainWindow : Window
 
         if (DataContext is MainViewModel vm)
             vm.StartApi();
+    }
+
+    /// <summary>Flush the alert history to disk on shutdown — the periodic save timer
+    /// (every 10s) might not have run since the last alert arrived.</summary>
+    private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (DataContext is MainViewModel vm)
+            vm.SaveHistoryNow();
     }
 
     /// <summary>
