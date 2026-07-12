@@ -145,9 +145,17 @@ public class MikroTikApiService
     {
         try
         {
-            var rulesJson = await _http.GetStringAsync("ip/firewall/filter?chain=forward&action=drop&src-address-list=DPI-Home-Blocked");
+            // Фильтруем только по chain/action в query-строке — это гарантированно
+            // поддерживаемые базовые поля. Раньше здесь ещё добавлялся src-address-list
+            // как параметр запроса, а RouterOS мог либо не поддержать такую фильтрацию,
+            // либо (что хуже) молча её проигнорировать и вернуть ВСЕ chain=forward
+            // action=drop правила — если на роутере уже было любое другое такое правило
+            // (блокировка портов, бонов и т.п.), проверка ошибочно решала "правило уже
+            // есть" и создание нашего правила пропускалось. Теперь фильтруем по
+            // src-address-list вручную на своей стороне, после получения списка.
+            var rulesJson = await _http.GetStringAsync("ip/firewall/filter?chain=forward&action=drop");
             var existing = JsonSerializer.Deserialize<List<MikroTikFirewallRule>>(rulesJson, JsonOpts);
-            if (existing != null && existing.Count > 0)
+            if (existing != null && existing.Any(r => r.SrcAddressList == "DPI-Home-Blocked"))
             {
                 return null; // правило уже есть
             }
