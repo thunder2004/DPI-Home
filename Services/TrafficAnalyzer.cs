@@ -326,6 +326,14 @@ public class TrafficAnalyzer
 
         if (isSyn && !isAck)
         {
+            // Важно: панель «HTTPS-соединения» должна показывать только входящие соединения
+            // (кто-то из WAN стучится к нашему сервису на 443), а НЕ наши собственные
+            // исходящие подключения (браузер → CDN/сайты). Направление именно этого,
+            // первого SYN-пакета однозначно говорит, кто инициатор: Outbound — это мы как клиент,
+            // Inbound — кто-то снаружи открывает соединение к нам. Без этой проверки сюда попадали
+            // и собственные выходы в интернет (например, Cloudflare от QUIC/HTTPS сёрфинга).
+            if (packet.Direction != TrafficDirection.Inbound) return;
+
             bool isNew = false;
             var conn = _httpsConnections.GetOrAdd(connKey, _ =>
             {
