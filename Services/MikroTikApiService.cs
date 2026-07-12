@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -6,6 +7,48 @@ using System.Text.Json.Serialization;
 using DPI_Home.Models;
 
 namespace DPI_Home.Services;
+
+/// <summary>
+/// Пишет подробный лог каждого HTTP-обмена с MikroTik: метод, URL, тело запроса,
+/// статус и тело ответа, полный текст исключений (ex.ToString(), а не только Message —
+/// там часто теряется реальная причина вроде TLS-ошибки или отказа в соединении).
+/// Нужен, потому что у нас нет прямого доступа к роутеру пользователя для отладки —
+/// этот файл единственный источник истины о том, что реально ушло и что вернулось.
+/// </summary>
+public static class MikroTikDebugLog
+{
+    public static readonly string LogPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "DPI-Home", "mikrotik-debug.log");
+
+    private static readonly object Lock = new();
+
+    public static void Log(string message)
+    {
+        try
+        {
+            lock (Lock)
+            {
+                var dir = Path.GetDirectoryName(LogPath)!;
+                Directory.CreateDirectory(dir);
+                var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}{Environment.NewLine}";
+                File.AppendAllText(LogPath, line);
+
+                // Простая ротация — не даём файлу расти бесконечно.
+                var info = new FileInfo(LogPath);
+                if (info.Exists && info.Length > 2_000_000)
+                {
+                    var lines = File.ReadAllLines(LogPath);
+                    File.WriteAllLines(LogPath, lines[Math.Max(0, lines.Length - 2000)..]);
+                }
+            }
+        }
+        catch
+        {
+            // Логирование не должно ронять приложение.
+        }
+    }
+}
 
 /// <summary>
 /// Сервис для управления MikroTik через REST API (RouterOS 7+)
@@ -38,6 +81,8 @@ public class MikroTikApiService
         _http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", auth);
         // Отключаем проверку SSL (самоподписанный сертификат MikroTik)
         ServicePointManager.ServerCertificateValidationCallback = delegate { return true; };
+
+        MikroTikDebugLog.Log($"=== Новая сессия MikroTikApiService, BaseAddress={_http.BaseAddress}, user={username} ===");
     }
 
     /// <summary>
@@ -48,15 +93,19 @@ public class MikroTikApiService
         try
         {
             // 1. Проверяем, есть ли уже такой IP в списке
-            var checkJson = await _http.GetStringAsync($"ip/firewall/address-list?address={ip}");
+            var checkUrl = $"ip/firewall/address-list?address={ip}";
+            MikroTikDebugLog.Log($"GET {checkUrl}");
+            var checkJson = await _http.GetStringAsync(checkUrl);
+            MikroTikDebugLog.Log($"  -> {checkJson}");
+
             var existing = JsonSerializer.Deserialize<List<MikroTikAddressList>>(checkJson, JsonOpts);
             if (existing != null && existing.Count > 0)
             {
+                MikroTikDebugLog.Log($"  IP {ip} уже есть в address-list (id={existing[0].Id})");
                 return $"IP {ip} уже есть в address-list (id={existing[0].Id})";
             }
 
             // 2. Создаём запись в address-list с timeout=1d
-            var expires = DateTime.UtcNow.AddDays(1);
             var payload = new
             {
                 address = ip,
@@ -64,10 +113,13 @@ public class MikroTikApiService
                 timeout = "1d",
                 comment = comment
             };
+            var body = JsonSerializer.Serialize(payload);
+            MikroTikDebugLog.Log($"PUT ip/firewall/address-list  body={body}");
 
-            var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+            var content = new StringContent(body, Encoding.UTF8, "application/json");
             var response = await _http.PutAsync("ip/firewall/address-list", content);
             var responseBody = await response.Content.ReadAsStringAsync();
+            MikroTikDebugLog.Log($"  -> {(int)response.StatusCode} {response.StatusCode}: {responseBody}");
 
             if (response.IsSuccessStatusCode)
             {
@@ -78,6 +130,7 @@ public class MikroTikApiService
         }
         catch (Exception ex)
         {
+            MikroTikDebugLog.Log($"  EXCEPTION в BlockIpAsync: {ex}");
             return $"Ошибка: {ex.Message}";
         }
     }
@@ -94,7 +147,10 @@ public class MikroTikApiService
     {
         try
         {
+            MikroTikDebugLog.Log("GET ip/cloud");
             var json = await _http.GetStringAsync("ip/cloud");
+            MikroTikDebugLog.Log($"  -> {json}");
+
             var cloud = JsonSerializer.Deserialize<MikroTikCloudInfo>(json, JsonOpts);
             if (cloud != null && !string.IsNullOrWhiteSpace(cloud.PublicAddress))
                 return (cloud.PublicAddress, null);
@@ -102,6 +158,7 @@ public class MikroTikApiService
         }
         catch (Exception ex)
         {
+            MikroTikDebugLog.Log($"  EXCEPTION в GetWanIpAsync: {ex}");
             return (null, $"Ошибка: {ex.Message}");
         }
     }
@@ -113,16 +170,20 @@ public class MikroTikApiService
     {
         try
         {
+            MikroTikDebugLog.Log("GET system/identity");
             var response = await _http.GetAsync("system/identity");
+            var body = await response.Content.ReadAsStringAsync();
+            MikroTikDebugLog.Log($"  -> {(int)response.StatusCode} {response.StatusCode}: {body}");
+
             if (response.IsSuccessStatusCode)
             {
-                var body = await response.Content.ReadAsStringAsync();
                 return null; // успешно
             }
             return $"Ошибка: {response.StatusCode}";
         }
         catch (Exception ex)
         {
+            MikroTikDebugLog.Log($"  EXCEPTION в TestConnectionAsync: {ex}");
             return $"Ошибка: {ex.Message}";
         }
     }
@@ -134,29 +195,26 @@ public class MikroTikApiService
     /// "src-address-list" (через дефис). Раньше здесь было "address-list" в GET-запросе
     /// проверки и "address_list" (с подчёркиванием) в теле создания — оба варианта не
     /// являются валидным match-полем для action=drop в RouterOS (просто "address-list" —
-    /// это параметр ДЕЙСТВИЯ add-src-to-address-list, а не критерий для drop). Из-за этого
-    /// либо запрос создания отклонялся API (правило не создавалось, блокировка была
-    /// декоративной — IP добавлялся в список, но трафик не дропался), либо, если сервер
-    /// проигнорировал незнакомое поле, могло создаться правило БЕЗ УСЛОВИЙ ВООБЩЕ —
-    /// т.е. drop всего транзитного трафика в цепочке forward. Если такое правило уже
-    /// создалось на вашем роутере — удалите его вручную и переподключитесь заново.
+    /// это параметр ДЕЙСТВИЯ add-src-to-address-list, а не критерий для drop).
+    ///
+    /// GET-проверка теперь фильтрует только по chain/action (базовые поля, точно
+    /// поддерживаются) и фильтрует по src-address-list вручную на своей стороне —
+    /// раньше проверка через query-параметр src-address-list могла быть проигнорирована
+    /// роутером и вернуть чужие chain=forward action=drop правила, ошибочно считая,
+    /// что наше правило уже есть.
     /// </summary>
     public async Task<string?> EnsureFirewallRuleAsync()
     {
         try
         {
-            // Фильтруем только по chain/action в query-строке — это гарантированно
-            // поддерживаемые базовые поля. Раньше здесь ещё добавлялся src-address-list
-            // как параметр запроса, а RouterOS мог либо не поддержать такую фильтрацию,
-            // либо (что хуже) молча её проигнорировать и вернуть ВСЕ chain=forward
-            // action=drop правила — если на роутере уже было любое другое такое правило
-            // (блокировка портов, бонов и т.п.), проверка ошибочно решала "правило уже
-            // есть" и создание нашего правила пропускалось. Теперь фильтруем по
-            // src-address-list вручную на своей стороне, после получения списка.
+            MikroTikDebugLog.Log("GET ip/firewall/filter?chain=forward&action=drop");
             var rulesJson = await _http.GetStringAsync("ip/firewall/filter?chain=forward&action=drop");
+            MikroTikDebugLog.Log($"  -> {rulesJson}");
+
             var existing = JsonSerializer.Deserialize<List<MikroTikFirewallRule>>(rulesJson, JsonOpts);
             if (existing != null && existing.Any(r => r.SrcAddressList == "DPI-Home-Blocked"))
             {
+                MikroTikDebugLog.Log("  Правило уже существует (найдено по src-address-list=DPI-Home-Blocked)");
                 return null; // правило уже есть
             }
 
@@ -169,18 +227,22 @@ public class MikroTikApiService
                 ["src-address-list"] = "DPI-Home-Blocked",
                 ["comment"] = "DPI-Home: блокировка подозрительных IP"
             };
+            var body = JsonSerializer.Serialize(payload);
+            MikroTikDebugLog.Log($"PUT ip/firewall/filter  body={body}");
 
-            var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+            var content = new StringContent(body, Encoding.UTF8, "application/json");
             var response = await _http.PutAsync("ip/firewall/filter", content);
+            var responseBody = await response.Content.ReadAsStringAsync();
+            MikroTikDebugLog.Log($"  -> {(int)response.StatusCode} {response.StatusCode}: {responseBody}");
 
             if (response.IsSuccessStatusCode)
                 return null;
 
-            var err = await response.Content.ReadAsStringAsync();
-            return $"Ошибка создания правила: {err}";
+            return $"Ошибка создания правила: {response.StatusCode} — {responseBody}";
         }
         catch (Exception ex)
         {
+            MikroTikDebugLog.Log($"  EXCEPTION в EnsureFirewallRuleAsync: {ex}");
             return $"Ошибка: {ex.Message}";
         }
     }
