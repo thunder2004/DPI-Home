@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using DPI_Home.Models;
 
 namespace DPI_Home.Services;
@@ -82,6 +83,30 @@ public class MikroTikApiService
     }
 
     /// <summary>
+    /// Определяет публичный (WAN) IP роутера через IP Cloud (RouterOS "/ip cloud").
+    /// Без этого IP NetworkContext не может классифицировать трафик, адресованный на наш
+    /// публичный адрес, как "наш" — такие пакеты получают Direction=Unknown и полностью
+    /// выпадают из детекта (в том числе SYN Flood на проброшенные из WAN сервисы).
+    /// Требует, чтобы служба IP Cloud была включена на роутере (/ip cloud set ddns-enabled=yes
+    /// или хотя бы просто включена сама служба — public-address заполняется в любом случае).
+    /// </summary>
+    public async Task<(string? Ip, string? Error)> GetWanIpAsync()
+    {
+        try
+        {
+            var json = await _http.GetStringAsync("ip/cloud");
+            var cloud = JsonSerializer.Deserialize<MikroTikCloudInfo>(json, JsonOpts);
+            if (cloud != null && !string.IsNullOrWhiteSpace(cloud.PublicAddress))
+                return (cloud.PublicAddress, null);
+            return (null, "IP Cloud не вернул public-address (служба выключена?)");
+        }
+        catch (Exception ex)
+        {
+            return (null, $"Ошибка: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// Проверяет подключение к MikroTik
     /// </summary>
     public async Task<string?> TestConnectionAsync()
@@ -155,4 +180,10 @@ public class MikroTikFirewallRule
     public string Chain { get; set; } = "";
     public string Action { get; set; } = "";
     public string AddressList { get; set; } = "";
+}
+
+public class MikroTikCloudInfo
+{
+    [JsonPropertyName("public-address")]
+    public string PublicAddress { get; set; } = "";
 }

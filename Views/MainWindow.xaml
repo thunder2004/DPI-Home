@@ -115,6 +115,22 @@
                                     ToolTip="Подключиться к MikroTik API"/>
                         </StackPanel>
                     </Border>
+
+                    <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="8,0,0,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="WAN IP:" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="0,0,6,0"
+                                       ToolTip="Публичный адрес роутера. Без него входящие атаки на ваш WAN-IP не детектируются (Direction=Unknown). Определяется автоматически при подключении к MikroTik (IP Cloud) либо вводится вручную."/>
+                            <TextBox Text="{Binding WanIp, UpdateSourceTrigger=PropertyChanged}" Width="100" FontSize="12"
+                                     Background="#0D1B2A" Foreground="White" BorderThickness="0"
+                                     materialDesign:HintAssist.Hint="напр. 203.0.113.7"/>
+                            <Button Command="{Binding ApplyWanIpCommand}"
+                                    Content="✔" Width="28" Height="24" FontSize="13"
+                                    Background="#37474F" Foreground="#66BB6A"
+                                    materialDesign:ButtonAssist.CornerRadius="4"
+                                    Margin="4,0,0,0" Cursor="Hand"
+                                    ToolTip="Применить WAN-IP вручную"/>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
             </Grid>
         </Border>
