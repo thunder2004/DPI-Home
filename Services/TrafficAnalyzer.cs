@@ -40,6 +40,13 @@ public class TrafficAnalyzer
     private const int SynFloodSourceThreshold = 30; // уникальных источников — признак спуфинга
     private const int WindowSeconds = 10;
 
+    // Нижняя граница эфемерного диапазона портов (RFC 6335 / большинство OC).
+    // Реальный сканер, ищущий открытые сервисы у нас, никогда не пойдёт в этот
+    // диапазон — там нет сервисов, только наши исходящие соединения. Без этого исключения
+    // UDP-ответы от любого бустого сервиса (например, QUIC/HTTP3 от CDN на :443)
+    // бьют в наши разные эфемерные порты и выглядит как «сканирование 20+ портов».
+    private const int EphemeralPortMin = 49152;
+
     private DateTime _lastEviction = DateTime.UtcNow;
     private static readonly TimeSpan EvictionInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan StateTtl = TimeSpan.FromMinutes(5);
@@ -128,6 +135,11 @@ public class TrafficAnalyzer
     {
         if (string.IsNullOrEmpty(packet.SrcIp) || packet.DstPort == 0) return;
         if (packet.IsNonFirstFragment) return;
+
+        // Порты в эфемерном диапазоне — это, как правило, НАШИ исходящие соединения,
+        // а не сервисы, которые мог бы искать сканер. Ответный UDP-трафик от занятого
+        // сервиса (QUIC/HTTP3, DNS-резолверы и т.д.) иначе даёт ложный port-скан.
+        if (packet.DstPort >= EphemeralPortMin) return;
 
         bool isProbe;
         if (packet.IsTcp && packet.TcpFlagsParsed)
