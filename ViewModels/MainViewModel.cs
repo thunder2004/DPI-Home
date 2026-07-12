@@ -144,6 +144,17 @@ public class MainViewModel : INotifyPropertyChanged
         set { _wanIp = value; OnPropertyChanged(); }
     }
 
+    private string _excludedPortsText = "";
+    /// <summary>Comma-separated ports excluded from SYN Flood / Port Scan detection —
+    /// e.g. a torrent client's listening port, whose swarm traffic (many short-lived
+    /// connections from many different real peers on one fixed port) otherwise looks
+    /// numerically identical to a flood.</summary>
+    public string ExcludedPortsText
+    {
+        get => _excludedPortsText;
+        set { _excludedPortsText = value; OnPropertyChanged(); }
+    }
+
     public bool AutoBlockEnabled
     {
         get => _autoBlockEnabled;
@@ -186,6 +197,7 @@ public class MainViewModel : INotifyPropertyChanged
     public ICommand ClearLogCommand { get; }
     public ICommand ConnectMikrotikCommand { get; }
     public ICommand ApplyWanIpCommand { get; }
+    public ICommand ApplyExcludedPortsCommand { get; }
     public ICommand OpenDebugLogCommand { get; }
     public ICommand CopyApiKeyCommand { get; }
     public ICommand BlockIpCommand { get; }
@@ -197,6 +209,7 @@ public class MainViewModel : INotifyPropertyChanged
         ClearLogCommand = new RelayCommand(ClearLog);
         ConnectMikrotikCommand = new AsyncRelayCommand(ConnectMikrotikAsync);
         ApplyWanIpCommand = new RelayCommand(ApplyWanIpManual);
+        ApplyExcludedPortsCommand = new RelayCommand(ApplyExcludedPorts);
         OpenDebugLogCommand = new RelayCommand(OpenDebugLog);
         CopyApiKeyCommand = new RelayCommand(CopyApiKey);
         BlockIpCommand = new AsyncRelayCommand<string>(ip => BlockIp(ip));
@@ -210,6 +223,7 @@ public class MainViewModel : INotifyPropertyChanged
         _autoBlockEnabled = settings.AutoBlockEnabled;
         _rdpThreshold = settings.RdpThreshold;
         _rdpWindowMinutes = settings.RdpWindowSeconds / 60;
+        _excludedPortsText = settings.ExcludedPorts;
 
         _sniffer = CreateSniffer();
 
@@ -231,6 +245,7 @@ public class MainViewModel : INotifyPropertyChanged
         _analyzer.OnDebugLog += msg => System.Diagnostics.Debug.WriteLine(msg);
         _analyzer.RdpThreshold = _rdpThreshold;
         _analyzer.RdpWindowSeconds = _rdpWindowMinutes * 60;
+        _analyzer.ExcludedPorts = ParsePorts(_excludedPortsText);
         _aggregator = new AlertAggregator();
 
         _analyzer.OnAlert += OnAlert;
@@ -300,7 +315,8 @@ public class MainViewModel : INotifyPropertyChanged
             AutoBlockEnabled = _autoBlockEnabled,
             ListenPort = _listenPort,
             RdpThreshold = _rdpThreshold,
-            RdpWindowSeconds = _rdpWindowMinutes * 60
+            RdpWindowSeconds = _rdpWindowMinutes * 60,
+            ExcludedPorts = _excludedPortsText
         });
     }
 
@@ -404,6 +420,30 @@ public class MainViewModel : INotifyPropertyChanged
         _netCtx.AddWanIp(_wanIp.Trim());
         OnError($"🌐 WAN-IP applied manually: {_wanIp.Trim()} — detection now covers inbound traffic to this address");
         SaveSettings();
+    }
+
+    /// <summary>Applies the excluded-ports list (e.g. a torrent client's port) to the analyzer.</summary>
+    public void ApplyExcludedPorts()
+    {
+        var ports = ParsePorts(_excludedPortsText);
+        _analyzer.ExcludedPorts = ports;
+        OnError(ports.Count > 0
+            ? $"🔧 Excluded from SYN Flood / Port Scan detection: {string.Join(", ", ports)}"
+            : "🔧 Port exclusion list cleared");
+        SaveSettings();
+    }
+
+    /// <summary>Parses a comma-separated port list, ignoring blanks and invalid entries.</summary>
+    private static HashSet<int> ParsePorts(string text)
+    {
+        var result = new HashSet<int>();
+        if (string.IsNullOrWhiteSpace(text)) return result;
+        foreach (var part in text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (int.TryParse(part, out var port) && port is > 0 and <= 65535)
+                result.Add(port);
+        }
+        return result;
     }
 
     /// <summary>

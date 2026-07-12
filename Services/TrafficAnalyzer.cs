@@ -56,6 +56,16 @@ public class TrafficAnalyzer
     private const int SynFloodSourceThreshold = 30; // unique sources — spoofing indicator
     public int RdpThreshold { get; set; } = 3;
     public int RdpWindowSeconds { get; set; } = 300;
+
+    /// <summary>
+    /// Ports excluded from SYN Flood / Port Scan detection — e.g. a torrent client's
+    /// listening port. Legitimate swarm traffic (many short-lived connections from
+    /// many different real peer IPs, all hitting one fixed local port) is
+    /// numerically indistinguishable from a SYN flood; the only reliable way to tell
+    /// them apart is knowing which ports are expected to behave that way.
+    /// </summary>
+    public HashSet<int> ExcludedPorts { get; set; } = new();
+
     private const int WindowSeconds = 10;
 
     // Lower bound of the ephemeral port range (RFC 6335 / most OSes).
@@ -175,6 +185,7 @@ public class TrafficAnalyzer
     {
         if (string.IsNullOrEmpty(packet.SrcIp) || packet.DstPort == 0) return;
         if (packet.IsNonFirstFragment) return;
+        if (ExcludedPorts.Contains(packet.DstPort)) return;
 
         // Ports in the ephemeral range are typically OUR outgoing connections,
         // not services a scanner would look for. Reply UDP traffic from a busy
@@ -284,6 +295,7 @@ public class TrafficAnalyzer
     private void DetectSynFlood(RawPacket packet)
     {
         if (!packet.IsTcp || packet.DstPort == 0 || !packet.TcpFlagsParsed) return;
+        if (ExcludedPorts.Contains(packet.DstPort)) return;
         bool isSyn = (packet.TcpFlags & 0x02) != 0;
         bool isAck = (packet.TcpFlags & 0x10) != 0;
         if (!isSyn || isAck) return;

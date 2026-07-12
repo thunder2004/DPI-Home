@@ -108,6 +108,7 @@ public class AgentApiService : IDisposable
                 "/api/autoblock" when method == "POST" => (await SetAutoBlock(ctx), 200),
                 "/api/wanip" when method == "POST" => (await SetWanIp(ctx), 200),
                 "/api/rdp-settings" when method == "POST" => (await SetRdpSettings(ctx), 200),
+                "/api/excluded-ports" when method == "POST" => (await SetExcludedPorts(ctx), 200),
 
                 _ => ("{\"error\":\"Not Found\"}", 404)
             };
@@ -307,6 +308,26 @@ public class AgentApiService : IDisposable
         return JsonSerializer.Serialize(new { rdpThreshold = _vm.RdpThreshold, rdpWindowMinutes = _vm.RdpWindowMinutes });
     }
 
+    /// <summary>Excludes ports (e.g. a torrent client's) from SYN Flood / Port Scan detection —
+    /// legitimate swarm traffic (many peers, one fixed port) is otherwise numerically
+    /// indistinguishable from a flood.</summary>
+    private async Task<string> SetExcludedPorts(HttpListenerContext ctx)
+    {
+        using var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
+        var body = await reader.ReadToEndAsync();
+        var payload = JsonSerializer.Deserialize<ExcludedPortsRequest>(body, JsonOpts);
+
+        if (payload?.Ports == null)
+            return JsonSerializer.Serialize(new { error = "ports required (array of int)" });
+
+        RunOnUiThread(() =>
+        {
+            _vm.ExcludedPortsText = string.Join(",", payload.Ports);
+            _vm.ApplyExcludedPorts();
+        });
+        return JsonSerializer.Serialize(new { excludedPorts = payload.Ports });
+    }
+
     /// <summary>
     /// Marshals a mutation onto the UI thread. Required for anything that touches a
     /// WPF-bound property or ObservableCollection: this API server runs handlers on
@@ -435,4 +456,9 @@ public class RdpSettingsRequest
 {
     public int Threshold { get; set; }
     public int WindowMinutes { get; set; }
+}
+
+public class ExcludedPortsRequest
+{
+    public List<int> Ports { get; set; } = new();
 }

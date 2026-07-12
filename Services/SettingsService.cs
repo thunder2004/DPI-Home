@@ -16,6 +16,10 @@ public class AppSettings
     public int ListenPort { get; set; } = 37008;
     public int RdpThreshold { get; set; } = 3;
     public int RdpWindowSeconds { get; set; } = 300;
+    /// <summary>Comma-separated ports excluded from SYN Flood / Port Scan detection —
+    /// e.g. a torrent client's listening port, which legitimately gets many short-lived
+    /// connections from many different peer IPs and otherwise looks identical to a flood.</summary>
+    public string ExcludedPorts { get; set; } = "";
     /// <summary>API key for the Agent API (GET /api/blocks, DELETE /api/blocks/{ip}).</summary>
     public string AgentApiKey { get; set; } = "";
 }
