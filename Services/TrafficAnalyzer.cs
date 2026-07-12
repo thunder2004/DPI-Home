@@ -29,6 +29,8 @@ public class TrafficAnalyzer
     private readonly NetworkContext _net;
     private readonly List<ThreatSignature> _signatures;
 
+    private TrafficStats _stats = new();
+
     private readonly ConcurrentDictionary<string, PortScanState> _portScans = new();
     private readonly ConcurrentDictionary<string, BruteForceState> _bruteForce = new();
     private readonly ConcurrentDictionary<string, SynFloodState> _synFloods = new();
@@ -65,6 +67,7 @@ public class TrafficAnalyzer
     private static readonly TimeSpan EvictionInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan StateTtl = TimeSpan.FromMinutes(5);
 
+    public event Action<string>? OnDebugLog;
     public event Action<Alert>? OnAlert;
     public event Action<HttpsConnection>? OnHttpsConnectionUpdate;
     public event Action<HttpsServerGroup>? OnHttpsServerGroupUpdate;
@@ -80,10 +83,18 @@ public class TrafficAnalyzer
 
     public void Analyze(RawPacket packet)
     {
+        if (packet == null) return;
+
+        _stats.TotalPackets++;
+        
+        // Debug: log incoming packets every 100
+        if (_stats.TotalPackets % 100 == 0)
+            OnDebugLog?.Invoke($"[PKT] Total: {_stats.TotalPackets} | Last: {packet.Protocol} {packet.SrcIp}→{packet.DstIp}:{packet.DstPort} Dir:{packet.Direction}");
+
         // Traffic direction — once, deliberately (replaces IsPrivateIp).
         packet.Direction = _net.Classify(packet.SrcIp, packet.DstIp);
 
-        // ponytail: skip all detectors for well-known service IPs (Google DNS, Apple DNS,
+        // note: skip all detectors for well-known service IPs (Google DNS, Apple DNS,
         // Cloudflare, etc.) — they trigger false DNS/ICMP tunneling and port scan alerts.
         // Alerts are noise; auto-block was already suppressed, but the alerts flooded the UI.
         if (_net.IsWellKnown(packet.SrcIp) || _net.IsWellKnown(packet.DstIp))
@@ -95,8 +106,14 @@ public class TrafficAnalyzer
 
         bool relevant = packet.Direction is TrafficDirection.Inbound or TrafficDirection.Internal;
 
-        if (relevant && packet.Protocol is "TCP" or "UDP" or "ICMP")
+        if (relevant && (packet.Protocol is "TCP" or "UDP" or "ICMP"))
         {
+            // NOTE: RunSignatures (NULL/FIN/XMAS scan, EternalBlue, DNS/ICMP tunneling)
+            // and DetectPortScan were missing from this block — a prior edit added
+            // DetectRdpBruteForce/well-known-IP suppression but dropped these two calls,
+            // silently disabling port scan detection and all signature-based alerts.
+            RunSignatures(packet);
+            DetectPortScan(packet);
             DetectBruteForce(packet);
             DetectSynFlood(packet);
             DetectRdpBruteForce(packet);
