@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Input;
@@ -148,6 +150,7 @@ public class MainViewModel : INotifyPropertyChanged
     public ICommand ClearLogCommand { get; }
     public ICommand ConnectMikrotikCommand { get; }
     public ICommand ApplyWanIpCommand { get; }
+    public ICommand OpenDebugLogCommand { get; }
         public ICommand BlockIpCommand { get; }
 
         public MainViewModel()
@@ -157,6 +160,7 @@ public class MainViewModel : INotifyPropertyChanged
         ClearLogCommand = new RelayCommand(ClearLog);
         ConnectMikrotikCommand = new AsyncRelayCommand(ConnectMikrotikAsync);
         ApplyWanIpCommand = new RelayCommand(ApplyWanIpManual);
+        OpenDebugLogCommand = new RelayCommand(OpenDebugLog);
         BlockIpCommand = new AsyncRelayCommand<string>(ip => BlockIp(ip));
 
         // Загружаем сохранённые настройки (MikroTik, WAN-IP, автоблок) — best-effort,
@@ -194,6 +198,25 @@ public class MainViewModel : INotifyPropertyChanged
         };
         _statsTimer.Tick += UpdateStats;
         _statsTimer.Start();
+    }
+
+    /// <summary>Открывает файл подробного лога HTTP-обмена с MikroTik (создаёт, если ещё нет).</summary>
+    private void OpenDebugLog()
+    {
+        try
+        {
+            var path = MikroTikDebugLog.LogPath;
+            var dir = Path.GetDirectoryName(path)!;
+            Directory.CreateDirectory(dir);
+            if (!File.Exists(path))
+                File.WriteAllText(path, "Лог пока пуст — выполните действие с MikroTik (подключение, блокировка), чтобы здесь появились записи.\r\n");
+
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            OnError($"⚠️ Не удалось открыть лог: {ex.Message}");
+        }
     }
 
     /// <summary>Собирает и сохраняет текущие настройки на диск (best-effort).</summary>

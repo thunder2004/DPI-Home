@@ -139,6 +139,13 @@
                                        ToolTip="Автоматически добавлять IP из Critical/High алертов в address-list DPI-Home-Blocked на MikroTik. Спуфленные SYN Flood не блокируются — SrcIp там ненадёжен."/>
                         </StackPanel>
                     </Border>
+
+                    <Button Command="{Binding OpenDebugLogCommand}"
+                            Content="📄 Лог" Width="70" Height="28" FontSize="11"
+                            Background="#37474F" Foreground="#B0BEC5"
+                            materialDesign:ButtonAssist.CornerRadius="6"
+                            Margin="8,0,0,0" Cursor="Hand"
+                            ToolTip="Открыть подробный лог HTTP-обмена с MikroTik (запросы, ответы, ошибки) — для диагностики, если правило/блокировка не появляются на роутере"/>
                 </StackPanel>
             </Grid>
         </Border>
