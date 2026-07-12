@@ -190,7 +190,7 @@
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="🔒" FontSize="18" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding HttpsServerCount}" FontSize="20" FontWeight="Bold" Foreground="#66BB6A" HorizontalAlignment="Center"/>
-                        <TextBlock Text="HTTPS серверов" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                        <TextBlock Text="HTTPS клиентов" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
                 <Border Grid.Column="6" Style="{StaticResource StatCardStyle}" Margin="4,0">
@@ -316,7 +316,7 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" HorizontalAlignment="Center">
                                 <TextBlock Text="{Binding HttpsServerCount}" FontSize="18" FontWeight="Bold" Foreground="#66BB6A" HorizontalAlignment="Center"/>
-                                <TextBlock Text="Серверов" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Клиентов" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
                             </StackPanel>
                             <StackPanel Grid.Column="1" HorizontalAlignment="Center">
                                 <TextBlock Text="{Binding HttpsEstablishedCount}" FontSize="18" FontWeight="Bold" Foreground="#4CAF50" HorizontalAlignment="Center"/>
@@ -347,7 +347,8 @@
                                             <StackPanel Grid.Column="1" Margin="6,0">
                                                 <StackPanel Orientation="Horizontal">
                                                     <TextBlock Text="{Binding DstIp}" FontWeight="SemiBold" FontSize="12" Foreground="White"/>
-                                                    <TextBlock Text=":443" FontSize="11" Foreground="#78909C" Margin="4,0,0,0"/>
+                                                    <TextBlock Text="→ :443" FontSize="11" Foreground="#78909C" Margin="4,0,0,0"
+                                                               ToolTip="Внешний клиент подключается к нашему сервису на порт 443"/>
                                                 </StackPanel>
                                                 <TextBlock Text="{Binding ConnectionsLabel}" FontSize="10" Foreground="#B0BEC5" Margin="0,2,0,0"/>
                                                 <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
