@@ -32,6 +32,13 @@ public class Alert
     public string ShortName { get; set; } = string.Empty;
     public HashSet<int> ScannedPorts { get; set; } = new();
 
+    /// <summary>
+    /// true, если SrcIp ненадёжен (вероятный спуфинг — например, SYN Flood с большим
+    /// числом уникальных источников). Такие IP нельзя автоблокировать: адрес может
+    /// принадлежать случайному постороннему человеку, а не атакующему.
+    /// </summary>
+    public bool Spoofed { get; set; }
+
     public string LevelIcon => Level switch
     {
         ThreatLevel.Info => "ℹ️",

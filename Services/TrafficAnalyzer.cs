@@ -288,7 +288,8 @@ public class TrafficAnalyzer
                     Protocol = "TCP",
                     PacketCount = state.TotalSyns,
                     Score = ThreatSignatures.ScoreFor(ThreatLevel.Critical),
-                    ScannedPorts = new HashSet<int> { packet.DstPort }
+                    ScannedPorts = new HashSet<int> { packet.DstPort },
+                    Spoofed = spoofed
                 });
                 state.Reset();
             }

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
@@ -41,6 +42,12 @@ public class MainViewModel : INotifyPropertyChanged
     // получает Direction=Unknown и не доходит до детекторов (в т.ч. SYN Flood).
     // Заполняется автоматически при подключении к MikroTik (через IP Cloud) либо вручную.
     private string _wanIp = "";
+
+    // Автоблокировка: при срабатывании Critical/High алерта с надёжным (не спуфленным)
+    // SrcIp автоматически добавляет его в address-list DPI-Home-Blocked на MikroTik.
+    private bool _autoBlockEnabled;
+    private readonly ConcurrentDictionary<string, DateTime> _autoBlockAttempts = new();
+    private static readonly TimeSpan AutoBlockCooldown = TimeSpan.FromHours(24); // совпадает со сроком блокировки на MikroTik
 
     public ObservableCollection<AlertGroup> AlertGroups { get; } = new();
     public ObservableCollection<HttpsServerGroup> HttpsServerGroups { get; } = new();
@@ -130,6 +137,12 @@ public class MainViewModel : INotifyPropertyChanged
         set { _wanIp = value; OnPropertyChanged(); }
     }
 
+    public bool AutoBlockEnabled
+    {
+        get => _autoBlockEnabled;
+        set { _autoBlockEnabled = value; OnPropertyChanged(); SaveSettings(); }
+    }
+
     public ICommand StartCommand { get; }
     public ICommand StopCommand { get; }
     public ICommand ClearLogCommand { get; }
@@ -144,16 +157,30 @@ public class MainViewModel : INotifyPropertyChanged
         ClearLogCommand = new RelayCommand(ClearLog);
         ConnectMikrotikCommand = new AsyncRelayCommand(ConnectMikrotikAsync);
         ApplyWanIpCommand = new RelayCommand(ApplyWanIpManual);
-        BlockIpCommand = new AsyncRelayCommand<string>(BlockIp);
+        BlockIpCommand = new AsyncRelayCommand<string>(ip => BlockIp(ip));
+
+        // Загружаем сохранённые настройки (MikroTik, WAN-IP, автоблок) — best-effort,
+        // при отсутствии/повреждении файла просто остаёмся на дефолтах.
+        var settings = SettingsService.Load();
+        _mikrotikHost = settings.MikrotikHost;
+        _mikrotikUser = settings.MikrotikUser;
+        _mikrotikPassword = settings.MikrotikPassword;
+        _listenPort = settings.ListenPort;
+        _autoBlockEnabled = settings.AutoBlockEnabled;
 
         _sniffer = CreateSniffer();
 
         // Контекст сети: свои подсети + WAN-IP. Без WAN-IP пакеты, адресованные на наш
         // публичный адрес, получают Direction=Unknown и не доходят до детекторов —
         // WAN-IP подставляется автоматически при подключении к MikroTik (см. ConnectMikrotikAsync)
-        // либо вручную через WanIp/ApplyWanIpCommand.
+        // либо вручную через WanIp/ApplyWanIpCommand, а также восстанавливается из настроек.
         _netCtx = NetworkContext.CreateDefault();
         _netCtx.Vantage = NetworkContext.CaptureVantage.Wan;
+        if (!string.IsNullOrWhiteSpace(settings.WanIp))
+        {
+            _netCtx.AddWanIp(settings.WanIp);
+            _wanIp = settings.WanIp;
+        }
         _analyzer = new TrafficAnalyzer(_netCtx);
         _aggregator = new AlertAggregator();
 
@@ -167,6 +194,20 @@ public class MainViewModel : INotifyPropertyChanged
         };
         _statsTimer.Tick += UpdateStats;
         _statsTimer.Start();
+    }
+
+    /// <summary>Собирает и сохраняет текущие настройки на диск (best-effort).</summary>
+    private void SaveSettings()
+    {
+        SettingsService.Save(new AppSettings
+        {
+            MikrotikHost = _mikrotikHost,
+            MikrotikUser = _mikrotikUser,
+            MikrotikPassword = _mikrotikPassword,
+            WanIp = _wanIp,
+            AutoBlockEnabled = _autoBlockEnabled,
+            ListenPort = _listenPort
+        });
     }
 
     private MikroTikSnifferService CreateSniffer()
@@ -241,6 +282,8 @@ public class MainViewModel : INotifyPropertyChanged
                 {
                     OnError($"⚠️ Не удалось определить WAN-IP автоматически ({wanErr}). Введите его вручную в поле WAN IP, иначе входящие атаки на публичный адрес не будут обнаруживаться");
                 }
+
+                SaveSettings();
             }
             else
             {
@@ -266,41 +309,72 @@ public class MainViewModel : INotifyPropertyChanged
 
         _netCtx.AddWanIp(_wanIp.Trim());
         OnError($"🌐 WAN-IP применён вручную: {_wanIp.Trim()} — детект теперь покрывает входящий трафик на этот адрес");
+        SaveSettings();
     }
 
     /// <summary>
-    /// Блокировка выбранного IP на MikroTik через address-list
+    /// Блокировка IP на MikroTik через address-list DPI-Home-Blocked (уже привязан
+    /// к правилу drop в forward-цепочке, созданному при подключении к MikroTik).
+    ///
+    /// Раньше сетевой вызов был обёрнут в "await Application.Current.Dispatcher.Invoke(async () => {...})" —
+    /// это классическая ловушка: Dispatcher.Invoke с Func&lt;Task&gt; возвращает ВНЕШНИЙ Task (сам факт
+    /// запуска делегата), а не Task его завершения, поэтому await отрабатывал раньше, чем реально
+    /// проходила блокировка на MikroTik. Сетевой вызов не обязан выполняться на UI-потоке — здесь он
+    /// просто await-ится напрямую; UI обновляется как обычно через _aggregator.Add(alert) (там уже
+    /// есть свой корректный Dispatcher.Invoke внутри OnAlertGroup).
     /// </summary>
-    public async Task BlockIp(string? ip)
+    public async Task BlockIp(string? ip, string? reason = null)
+    {
+        if (string.IsNullOrEmpty(ip) || _mikrotikApi == null)
         {
-            if (string.IsNullOrEmpty(ip) || _mikrotikApi == null)
-            {
-                OnError("⚠️ Сначала подключись к MikroTik");
-                return;
-            }
+            OnError("⚠️ Сначала подключись к MikroTik");
+            return;
+        }
 
-            await Application.Current.Dispatcher.Invoke(async () =>
+        var comment = reason ?? $"DPI-Home manual block {DateTime.Now:yyyy-MM-dd HH:mm}";
+        var error = await _mikrotikApi.BlockIpAsync(ip, comment);
+
+        if (error == null)
+        {
+            var alert = new Alert
             {
-                var error = await _mikrotikApi.BlockIpAsync(ip, $"DPI-Home auto-block {DateTime.Now:yyyy-MM-dd HH:mm}");
-            if (error == null)
-            {
-                var alert = new Alert
-                {
-                    Timestamp = DateTime.Now,
-                    Level = ThreatLevel.High,
-                    Category = "MikroTik",
-                    Title = "IP заблокирован на MikroTik",
-                    Description = $"IP {ip} добавлен в address-list DPI-Home-Blocked на 24ч",
-                    SrcIp = ip,
-                    Score = 0
-                };
-                _aggregator.Add(alert);
-            }
-            else
-            {
-                OnError($"❌ Блокировка IP {ip}: {error}");
-            }
-        });
+                Timestamp = DateTime.Now,
+                Level = ThreatLevel.High,
+                Category = "MikroTik",
+                Title = "IP заблокирован на MikroTik",
+                Description = $"IP {ip} добавлен в address-list DPI-Home-Blocked на 24ч ({comment})",
+                SrcIp = ip,
+                Score = 0
+            };
+            _aggregator.Add(alert);
+        }
+        else
+        {
+            OnError($"❌ Блокировка IP {ip}: {error}");
+        }
+    }
+
+    /// <summary>
+    /// Автоблокировка: срабатывает на Critical/High алертах с надёжным SrcIp.
+    /// Спуфленные SYN Flood (Alert.Spoofed=true) пропускаются намеренно — при спуфинге
+    /// SrcIp может принадлежать случайному постороннему адресу, а не атакующему,
+    /// и блокировка такого IP не остановит атаку, зато может навредить невиновному.
+    /// </summary>
+    private void TryAutoBlock(Alert alert)
+    {
+        if (!AutoBlockEnabled) return;
+        if (_mikrotikApi == null || !MikrotikConnected) return;
+        if (alert.Spoofed) return;
+        if (alert.Level is not (ThreatLevel.Critical or ThreatLevel.High)) return;
+        if (string.IsNullOrEmpty(alert.SrcIp) || alert.SrcIp == "system") return;
+        if (_netCtx.IsLocal(alert.SrcIp)) return; // подстраховка: свою же сеть никогда не блокируем
+
+        var now = DateTime.UtcNow;
+        if (_autoBlockAttempts.TryGetValue(alert.SrcIp, out var last) && now - last < AutoBlockCooldown)
+            return; // уже пытались недавно для этого IP — не спамим API на каждое повторное срабатывание
+        _autoBlockAttempts[alert.SrcIp] = now;
+
+        _ = BlockIp(alert.SrcIp, $"DPI-Home auto-block: {alert.Category} ({DateTime.Now:yyyy-MM-dd HH:mm})");
     }
 
     private void OnPacketReceived(RawPacket packet)
@@ -312,6 +386,7 @@ public class MainViewModel : INotifyPropertyChanged
     private void OnAlert(Alert alert)
     {
         _aggregator.Add(alert);
+        TryAutoBlock(alert);
     }
 
     private void OnAlertGroup(AlertGroup group)
