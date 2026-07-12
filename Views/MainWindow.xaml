@@ -198,6 +198,12 @@
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="🔑" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0"/>
                             <TextBlock Text="{Binding AgentApiKey}" FontSize="10" Foreground="#66BB6A" FontFamily="Consolas" VerticalAlignment="Center" MaxWidth="160" TextTrimming="CharacterEllipsis"/>
+                            <Button Command="{Binding CopyApiKeyCommand}"
+                                    Content="📋" Width="24" Height="22" FontSize="11"
+                                    Background="#37474F" Foreground="White"
+                                    materialDesign:ButtonAssist.CornerRadius="4"
+                                    Margin="6,0,0,0" Padding="0" Cursor="Hand"
+                                    ToolTip="Copy API key to clipboard"/>
                         </StackPanel>
                     </Border>
                 </WrapPanel>

@@ -187,6 +187,7 @@ public class MainViewModel : INotifyPropertyChanged
     public ICommand ConnectMikrotikCommand { get; }
     public ICommand ApplyWanIpCommand { get; }
     public ICommand OpenDebugLogCommand { get; }
+    public ICommand CopyApiKeyCommand { get; }
     public ICommand BlockIpCommand { get; }
 
     public MainViewModel()
@@ -197,6 +198,7 @@ public class MainViewModel : INotifyPropertyChanged
         ConnectMikrotikCommand = new AsyncRelayCommand(ConnectMikrotikAsync);
         ApplyWanIpCommand = new RelayCommand(ApplyWanIpManual);
         OpenDebugLogCommand = new RelayCommand(OpenDebugLog);
+        CopyApiKeyCommand = new RelayCommand(CopyApiKey);
         BlockIpCommand = new AsyncRelayCommand<string>(ip => BlockIp(ip));
 
         // Load saved settings (MikroTik, WAN-IP, auto-block) — best-effort,
@@ -251,6 +253,21 @@ public class MainViewModel : INotifyPropertyChanged
         };
         _statsTimer.Tick += UpdateStats;
         _statsTimer.Start();
+    }
+
+    /// <summary>Copies the Agent API key to the clipboard.</summary>
+    private void CopyApiKey()
+    {
+        if (string.IsNullOrEmpty(_agentApiKey)) return;
+        try
+        {
+            Clipboard.SetText(_agentApiKey);
+            OnError("📋 API key copied to clipboard");
+        }
+        catch (Exception ex)
+        {
+            OnError($"⚠️ Failed to copy API key: {ex.Message}");
+        }
     }
 
     /// <summary>Opens the detailed HTTP exchange log with MikroTik (creates it if it doesn't exist).</summary>
