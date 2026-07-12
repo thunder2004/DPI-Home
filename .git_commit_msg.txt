@@ -1,0 +1,17 @@
+Fix HTTPS panel: group by client, not server IP
+
+After the earlier fix that made TrackHttpsConnection only track Inbound
+connections, the "server" side of every tracked connection is always
+OUR OWN WAN IP (since Inbound means someone external connects to us).
+The panel kept grouping by serverIp, so every distinct external client
+(including an actual attacker during a SYN flood test) collapsed into
+a single row showing our own address - the attacking IP was never
+visible anywhere in the UI, only aggregate counts.
+
+Fix: group HttpsServerGroups by clientIp instead. Added an explicit
+ClientIp field to HttpsConnection (alongside the existing ServerIp)
+so eviction can roll back the correct group without re-deriving it.
+Renamed AdjustServerGroup to AdjustClientGroup for clarity. Updated
+UI labels ("HTTPS серверов" / "Серверов" -> "HTTPS клиентов" /
+"Клиентов") and removed the now-misleading ":443" suffix next to the
+displayed address (that's our port, not the client's).

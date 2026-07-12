@@ -26,6 +26,10 @@ public class HttpsConnection
     /// чтобы при очистке можно было точно откатиться к нужной группе без перевычисления.</summary>
     public string ServerIp { get; set; } = string.Empty;
 
+    /// <summary>IP внешнего клиента, подключающегося к нам (панель группируется по нему —
+    /// т.к. после фильтра "только входящие" ServerIp всегда равен нашему собственному WAN-IP).</summary>
+    public string ClientIp { get; set; } = string.Empty;
+
     public ConnectionState State { get; set; } = ConnectionState.SynSent;
     public long PacketCount { get; set; }
     public long BytesTransferred { get; set; }

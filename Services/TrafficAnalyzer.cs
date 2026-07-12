@@ -347,16 +347,20 @@ public class TrafficAnalyzer
                     SrcPort = packet.SrcPort,
                     DstPort = 443,
                     ServerIp = serverIp,
+                    ClientIp = clientIp,
                     State = ConnectionState.SynSent
                 };
             });
             conn.PacketCount++;
             conn.BytesTransferred += packet.PacketLength;
 
+            // Группируем по КЛИЕНТУ, а не по серверу: после фильтра "только Inbound"
+            // сервер всегда равен нашему собственному WAN-IP, так что группировка по нему
+            // схлопнула бы всех разных атакующих в одну строку с нашим же адресом.
             if (isNew)
-                AdjustServerGroup(serverIp, g => { g.SynSentCount++; g.TotalConnections++; });
+                AdjustClientGroup(clientIp, g => { g.SynSentCount++; g.TotalConnections++; });
             else
-                AdjustServerGroup(serverIp, _ => { }); // ретрансмит SYN — счётчики состояния не меняются
+                AdjustClientGroup(clientIp, _ => { }); // ретрансмит SYN — счётчики состояния не меняются
 
             OnHttpsConnectionUpdate?.Invoke(conn);
         }
@@ -367,7 +371,7 @@ public class TrafficAnalyzer
                 conn.State = ConnectionState.Established;
                 conn.PacketCount++;
                 conn.BytesTransferred += packet.PacketLength;
-                AdjustServerGroup(serverIp, g => { g.SynSentCount--; g.EstablishedCount++; });
+                AdjustClientGroup(clientIp, g => { g.SynSentCount--; g.EstablishedCount++; });
                 OnHttpsConnectionUpdate?.Invoke(conn);
             }
         }
@@ -380,7 +384,7 @@ public class TrafficAnalyzer
                 conn.Timestamp = DateTime.UtcNow; // время закрытия — для TTL при eviction
                 conn.PacketCount++;
                 conn.BytesTransferred += packet.PacketLength;
-                AdjustServerGroup(serverIp, g =>
+                AdjustClientGroup(clientIp, g =>
                 {
                     if (prevState == ConnectionState.Established) g.EstablishedCount--;
                     else if (prevState == ConnectionState.SynSent) g.SynSentCount--;
@@ -398,7 +402,7 @@ public class TrafficAnalyzer
             {
                 conn.PacketCount++;
                 conn.BytesTransferred += packet.PacketLength;
-                AdjustServerGroup(serverIp, _ => { });
+                AdjustClientGroup(clientIp, _ => { });
             }
         }
 
@@ -416,7 +420,7 @@ public class TrafficAnalyzer
                 c.State == ConnectionState.Closed && c.Timestamp < cutoff &&
                 _httpsConnections.TryRemove(k, out var removed))
             {
-                AdjustServerGroup(removed.ServerIp, g =>
+                AdjustClientGroup(removed.ClientIp, g =>
                 {
                     g.ClosedCount = Math.Max(0, g.ClosedCount - 1);
                     g.TotalConnections = Math.Max(0, g.TotalConnections - 1);
@@ -428,14 +432,15 @@ public class TrafficAnalyzer
     }
 
     /// <summary>
-    /// Мутирует группу по серверу и испускает UI-событие с троттлингом 300мс на сервер —
-    /// сама мутация счётчиков всегда O(1) и ничем не ограничена, троттлится только перерисовка UI.
+    /// Мутирует группу по КЛИЕНТУ (внешнему IP, который к нам подключается) и испускает
+    /// UI-событие с троттлингом 300мс на клиента — сама мутация счётчиков всегда O(1)
+    /// и ничем не ограничена, троттлится только перерисовка UI.
     /// </summary>
-    private void AdjustServerGroup(string serverIp, Action<HttpsServerGroup> mutate)
+    private void AdjustClientGroup(string clientIp, Action<HttpsServerGroup> mutate)
     {
-        var group = _httpsServerGroups.GetOrAdd(serverIp, _ => new HttpsServerGroup
+        var group = _httpsServerGroups.GetOrAdd(clientIp, _ => new HttpsServerGroup
         {
-            DstIp = serverIp,
+            DstIp = clientIp,
             FirstSeen = DateTime.Now
         });
 
@@ -446,11 +451,11 @@ public class TrafficAnalyzer
         }
 
         var now = DateTime.UtcNow;
-        bool shouldEmit = !_httpsGroupLastEmit.TryGetValue(serverIp, out var last)
+        bool shouldEmit = !_httpsGroupLastEmit.TryGetValue(clientIp, out var last)
                         || now - last >= HttpsGroupEmitInterval;
         if (shouldEmit)
         {
-            _httpsGroupLastEmit[serverIp] = now;
+            _httpsGroupLastEmit[clientIp] = now;
             OnHttpsServerGroupUpdate?.Invoke(group);
         }
     }
