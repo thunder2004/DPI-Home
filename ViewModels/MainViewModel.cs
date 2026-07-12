@@ -62,6 +62,16 @@ public class MainViewModel : INotifyPropertyChanged
     private volatile bool _historyDirty;
     private static readonly TimeSpan HistorySaveInterval = TimeSpan.FromSeconds(10);
 
+    // Syslog receiver — e.g. Kerio Control reverse-proxy access logs, used to spot
+    // credential-file/exploit probing that packet-level analysis can't see (it's inside
+    // encrypted HTTPS). Off by default: it's a distinct data source the user opts into
+    // by pointing their appliance at it, not something DPI-Home assumes exists.
+    private SyslogListenerService? _syslogListener;
+    private bool _syslogEnabled;
+    private int _syslogPort = 5140;
+    private readonly ConcurrentDictionary<string, DateTime> _syslogRateLimit = new();
+    private static readonly TimeSpan SyslogRateLimitWindow = TimeSpan.FromSeconds(5);
+
     public ObservableCollection<AlertGroup> AlertGroups { get; } = new();
     public ObservableCollection<HttpsServerGroup> HttpsServerGroups { get; } = new();
 
@@ -163,6 +173,39 @@ public class MainViewModel : INotifyPropertyChanged
         set { _excludedPortsText = value; OnPropertyChanged(); }
     }
 
+    private bool _syslogListening;
+    /// <summary>Whether the syslog UDP listener is actually running right now
+    /// (distinct from SyslogEnabled, the persisted user preference — they can briefly
+    /// diverge, e.g. if the port failed to bind).</summary>
+    public bool SyslogListening
+    {
+        get => _syslogListening;
+        private set { _syslogListening = value; OnPropertyChanged(); }
+    }
+
+    private string _syslogPortText = "5140";
+    public string SyslogPortText
+    {
+        get => _syslogPortText;
+        set { _syslogPortText = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>Toggling this starts/stops the syslog listener immediately (the port itself
+    /// is applied separately via ApplySyslogSettingsCommand, since changing it needs a
+    /// restart of the listener rather than firing on every keystroke).</summary>
+    public bool SyslogEnabled
+    {
+        get => _syslogEnabled;
+        set
+        {
+            _syslogEnabled = value;
+            OnPropertyChanged();
+            SaveSettings();
+            if (value) StartSyslogListener();
+            else StopSyslogListener();
+        }
+    }
+
     public bool AutoBlockEnabled
     {
         get => _autoBlockEnabled;
@@ -206,6 +249,7 @@ public class MainViewModel : INotifyPropertyChanged
     public ICommand ConnectMikrotikCommand { get; }
     public ICommand ApplyWanIpCommand { get; }
     public ICommand ApplyExcludedPortsCommand { get; }
+    public ICommand ApplySyslogSettingsCommand { get; }
     public ICommand OpenDebugLogCommand { get; }
     public ICommand CopyApiKeyCommand { get; }
     public ICommand BlockIpCommand { get; }
@@ -218,6 +262,7 @@ public class MainViewModel : INotifyPropertyChanged
         ConnectMikrotikCommand = new AsyncRelayCommand(ConnectMikrotikAsync);
         ApplyWanIpCommand = new RelayCommand(ApplyWanIpManual);
         ApplyExcludedPortsCommand = new RelayCommand(ApplyExcludedPorts);
+        ApplySyslogSettingsCommand = new RelayCommand(ApplySyslogSettings);
         OpenDebugLogCommand = new RelayCommand(OpenDebugLog);
         CopyApiKeyCommand = new RelayCommand(CopyApiKey);
         BlockIpCommand = new AsyncRelayCommand<string>(ip => BlockIp(ip));
@@ -232,6 +277,9 @@ public class MainViewModel : INotifyPropertyChanged
         _rdpThreshold = settings.RdpThreshold;
         _rdpWindowMinutes = settings.RdpWindowSeconds / 60;
         _excludedPortsText = settings.ExcludedPorts;
+        _syslogEnabled = settings.SyslogEnabled;
+        _syslogPort = settings.SyslogPort;
+        _syslogPortText = settings.SyslogPort.ToString();
 
         _sniffer = CreateSniffer();
 
@@ -285,6 +333,9 @@ public class MainViewModel : INotifyPropertyChanged
         _historyTimer = new DispatcherTimer { Interval = HistorySaveInterval };
         _historyTimer.Tick += (_, _) => SaveHistoryIfDirty();
         _historyTimer.Start();
+
+        if (_syslogEnabled)
+            StartSyslogListener();
     }
 
     /// <summary>Copies the Agent API key to the clipboard.</summary>
@@ -333,8 +384,79 @@ public class MainViewModel : INotifyPropertyChanged
             ListenPort = _listenPort,
             RdpThreshold = _rdpThreshold,
             RdpWindowSeconds = _rdpWindowMinutes * 60,
-            ExcludedPorts = _excludedPortsText
+            ExcludedPorts = _excludedPortsText,
+            SyslogEnabled = _syslogEnabled,
+            SyslogPort = _syslogPort
         });
+    }
+
+    /// <summary>Applies a new syslog port (stops + restarts the listener if it was running)
+    /// and persists it. Unlike SyslogEnabled, the port isn't applied on every keystroke —
+    /// changing it mid-typing would repeatedly kill and rebind the socket.</summary>
+    public void ApplySyslogSettings()
+    {
+        if (!int.TryParse(_syslogPortText, out var port) || port is <= 0 or > 65535)
+        {
+            OnError("⚠️ Invalid syslog port — enter a number between 1 and 65535");
+            return;
+        }
+
+        _syslogPort = port;
+        SaveSettings();
+
+        if (_syslogEnabled)
+        {
+            StopSyslogListener();
+            StartSyslogListener();
+        }
+        else
+        {
+            OnError($"🔧 Syslog port set to {port} (listener is currently off — enable it to start listening)");
+        }
+    }
+
+    private void StartSyslogListener()
+    {
+        if (_syslogListener != null) return;
+
+        _syslogListener = new SyslogListenerService(_syslogPort);
+        _syslogListener.OnMessageReceived += OnSyslogMessage;
+        _syslogListener.OnError += OnError;
+        _syslogListener.OnRunningChanged += running =>
+            Application.Current.Dispatcher.Invoke(() => SyslogListening = running);
+        _ = _syslogListener.StartAsync();
+    }
+
+    private void StopSyslogListener()
+    {
+        _syslogListener?.Dispose();
+        _syslogListener = null;
+        SyslogListening = false;
+    }
+
+    /// <summary>
+    /// Handles one raw syslog line (e.g. a Kerio Control reverse-proxy access log entry).
+    /// Reuses the same Alert → AlertAggregator → AutoBlock pipeline as packet-based
+    /// detection, so syslog-sourced findings show up in the same Event Feed and can be
+    /// auto-blocked the same way.
+    /// </summary>
+    private void OnSyslogMessage(string rawMessage)
+    {
+        // Logged unconditionally (not just on a signature match) so the user can open
+        // the same 📄 Log file and see exactly what's arriving — useful for tuning the
+        // parser/signatures against a real appliance without having sample data upfront.
+        MikroTikDebugLog.Log($"[SYSLOG] {rawMessage}");
+
+        var alert = SyslogAnalyzer.Analyze(rawMessage);
+        if (alert == null) return;
+
+        var key = $"{alert.SrcIp}|{alert.Category}";
+        var now = DateTime.UtcNow;
+        if (_syslogRateLimit.TryGetValue(key, out var last) && now - last < SyslogRateLimitWindow)
+            return;
+        _syslogRateLimit[key] = now;
+
+        OnAlert(alert);
     }
 
     /// <summary>Saves alert history to disk if it changed since the last save (called by the periodic timer).</summary>

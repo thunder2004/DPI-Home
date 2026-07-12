@@ -20,6 +20,11 @@ public class AppSettings
     /// e.g. a torrent client's listening port, which legitimately gets many short-lived
     /// connections from many different peer IPs and otherwise looks identical to a flood.</summary>
     public string ExcludedPorts { get; set; } = "";
+    /// <summary>Whether the Syslog receiver (e.g. for Kerio Control reverse-proxy access logs)
+    /// is enabled, and which UDP port it listens on. Not 514 by default — that needs elevated
+    /// privileges on Windows and risks clashing with other services; a high port avoids both.</summary>
+    public bool SyslogEnabled { get; set; }
+    public int SyslogPort { get; set; } = 5140;
     /// <summary>API key for the Agent API (GET /api/blocks, DELETE /api/blocks/{ip}).</summary>
     public string AgentApiKey { get; set; } = "";
 }

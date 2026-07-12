@@ -109,6 +109,7 @@ public class AgentApiService : IDisposable
                 "/api/wanip" when method == "POST" => (await SetWanIp(ctx), 200),
                 "/api/rdp-settings" when method == "POST" => (await SetRdpSettings(ctx), 200),
                 "/api/excluded-ports" when method == "POST" => (await SetExcludedPorts(ctx), 200),
+                "/api/syslog" when method == "POST" => (await SetSyslog(ctx), 200),
 
                 _ => ("{\"error\":\"Not Found\"}", 404)
             };
@@ -328,6 +329,29 @@ public class AgentApiService : IDisposable
         return JsonSerializer.Serialize(new { excludedPorts = payload.Ports });
     }
 
+    /// <summary>Configures the syslog receiver (e.g. Kerio Control reverse-proxy logs).
+    /// port=0 or omitted leaves the current port unchanged.</summary>
+    private async Task<string> SetSyslog(HttpListenerContext ctx)
+    {
+        using var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
+        var body = await reader.ReadToEndAsync();
+        var payload = JsonSerializer.Deserialize<SyslogRequest>(body, JsonOpts);
+
+        if (payload == null)
+            return JsonSerializer.Serialize(new { error = "invalid body" });
+
+        RunOnUiThread(() =>
+        {
+            if (payload.Port > 0)
+            {
+                _vm.SyslogPortText = payload.Port.ToString();
+                _vm.ApplySyslogSettings();
+            }
+            _vm.SyslogEnabled = payload.Enabled;
+        });
+        return JsonSerializer.Serialize(new { syslogEnabled = _vm.SyslogEnabled, syslogListening = _vm.SyslogListening });
+    }
+
     /// <summary>
     /// Marshals a mutation onto the UI thread. Required for anything that touches a
     /// WPF-bound property or ObservableCollection: this API server runs handlers on
@@ -389,7 +413,9 @@ public class AgentApiService : IDisposable
             rdpWindowMinutes = _vm.RdpWindowMinutes,
             httpsClients = _vm.HttpsServerCount,
             httpsEstablished = _vm.HttpsEstablishedCount,
-            alertsTotal = _vm.AlertGroups.Count
+            alertsTotal = _vm.AlertGroups.Count,
+            syslogEnabled = _vm.SyslogEnabled,
+            syslogListening = _vm.SyslogListening
         });
     }
 
@@ -461,4 +487,10 @@ public class RdpSettingsRequest
 public class ExcludedPortsRequest
 {
     public List<int> Ports { get; set; } = new();
+}
+
+public class SyslogRequest
+{
+    public bool Enabled { get; set; }
+    public int Port { get; set; }
 }

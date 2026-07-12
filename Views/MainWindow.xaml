@@ -206,7 +206,7 @@
                             Background="#37474F" Foreground="#B0BEC5"
                             materialDesign:ButtonAssist.CornerRadius="6"
                             Margin="0,4,8,4" Cursor="Hand"
-                            ToolTip="Open detailed HTTP exchange log with MikroTik (requests, responses, errors) — for diagnostics if rules/blocks don't appear on the router"/>
+                            ToolTip="Open detailed log — MikroTik HTTP exchange and raw syslog lines — for diagnostics if rules/blocks don't appear on the router, or to see what a syslog source actually sends"/>
 
                     <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="0,4,8,4">
                         <StackPanel Orientation="Horizontal">
@@ -221,6 +221,35 @@
                                     materialDesign:ButtonAssist.CornerRadius="4"
                                     Margin="4,0,0,0" Cursor="Hand"
                                     ToolTip="Apply excluded ports"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="0,4,8,4">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="8" Height="8" Margin="0,0,6,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="#607D8B"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding SyslogListening}" Value="True">
+                                                <Setter Property="Fill" Value="#4CAF50"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <CheckBox IsChecked="{Binding SyslogEnabled}" VerticalAlignment="Center" Margin="0,0,6,0"
+                                      ToolTip="Receive syslog from a reverse proxy (e.g. Kerio Control) to spot credential/exploit probing hidden inside encrypted HTTPS — packet analysis alone can't see it."/>
+                            <TextBlock Text="Syslog UDP:" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                            <TextBox Text="{Binding SyslogPortText, UpdateSourceTrigger=PropertyChanged}" Width="50" FontSize="12"
+                                     Background="#0D1B2A" Foreground="White" BorderThickness="0"
+                                     materialDesign:HintAssist.Hint="5140"/>
+                            <Button Command="{Binding ApplySyslogSettingsCommand}"
+                                    Content="✔" Width="28" Height="24" FontSize="13"
+                                    Background="#37474F" Foreground="#66BB6A"
+                                    materialDesign:ButtonAssist.CornerRadius="4"
+                                    Margin="4,0,0,0" Cursor="Hand"
+                                    ToolTip="Apply syslog port (restarts the listener if enabled)"/>
                         </StackPanel>
                     </Border>
 
