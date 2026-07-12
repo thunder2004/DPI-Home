@@ -72,6 +72,11 @@ public class MainViewModel : INotifyPropertyChanged
     private readonly ConcurrentDictionary<string, DateTime> _syslogRateLimit = new();
     private static readonly TimeSpan SyslogRateLimitWindow = TimeSpan.FromSeconds(5);
 
+    // Attack patterns for the syslog analyzer, file-backed (not hardcoded) — see
+    // SyslogPatternStore. Reference reassignment on reload is atomic, so the
+    // syslog-listener thread reading this concurrently never sees a torn/half-updated list.
+    private volatile List<SyslogSignature> _syslogPatterns = new();
+
     public ObservableCollection<AlertGroup> AlertGroups { get; } = new();
     public ObservableCollection<HttpsServerGroup> HttpsServerGroups { get; } = new();
 
@@ -251,6 +256,7 @@ public class MainViewModel : INotifyPropertyChanged
     public ICommand ApplyExcludedPortsCommand { get; }
     public ICommand ApplySyslogSettingsCommand { get; }
     public ICommand OpenDebugLogCommand { get; }
+    public ICommand OpenSyslogPatternsCommand { get; }
     public ICommand CopyApiKeyCommand { get; }
     public ICommand BlockIpCommand { get; }
 
@@ -264,6 +270,7 @@ public class MainViewModel : INotifyPropertyChanged
         ApplyExcludedPortsCommand = new RelayCommand(ApplyExcludedPorts);
         ApplySyslogSettingsCommand = new RelayCommand(ApplySyslogSettings);
         OpenDebugLogCommand = new RelayCommand(OpenDebugLog);
+        OpenSyslogPatternsCommand = new RelayCommand(OpenSyslogPatterns);
         CopyApiKeyCommand = new RelayCommand(CopyApiKey);
         BlockIpCommand = new AsyncRelayCommand<string>(ip => BlockIp(ip));
 
@@ -336,6 +343,17 @@ public class MainViewModel : INotifyPropertyChanged
 
         if (_syslogEnabled)
             StartSyslogListener();
+
+        // Load syslog attack patterns from disk (not hardcoded) and hot-reload when the
+        // file changes on disk — e.g. an agent adding a pattern via the Agent API, or the
+        // user editing the file by hand.
+        _syslogPatterns = SyslogPatternStore.Load();
+        SyslogPatternStore.OnPatternsChanged += () =>
+        {
+            _syslogPatterns = SyslogPatternStore.Load();
+            OnError($"🔄 Syslog patterns reloaded from disk ({_syslogPatterns.Count} rules)");
+        };
+        SyslogPatternStore.StartWatching();
     }
 
     /// <summary>Copies the Agent API key to the clipboard.</summary>
@@ -351,6 +369,54 @@ public class MainViewModel : INotifyPropertyChanged
         {
             OnError($"⚠️ Failed to copy API key: {ex.Message}");
         }
+    }
+
+    /// <summary>Opens the syslog-patterns.json file (creates it with the built-in defaults
+    /// if it doesn't exist yet) — edit it directly, or add/remove patterns via the Agent API;
+    /// either way the running app picks up the change without a restart.</summary>
+    private void OpenSyslogPatterns()
+    {
+        try
+        {
+            if (!File.Exists(SyslogPatternStore.PatternsPath))
+                SyslogPatternStore.Save(SyslogPatternStore.Load());
+
+            Process.Start(new ProcessStartInfo(SyslogPatternStore.PatternsPath) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            OnError($"⚠️ Failed to open syslog patterns file: {ex.Message}");
+        }
+    }
+
+    /// <summary>Current syslog attack patterns (for the Agent API to list).</summary>
+    public List<SyslogSignature> GetSyslogPatterns() => _syslogPatterns.ToList();
+
+    /// <summary>Adds a new pattern or replaces an existing one with the same Name.
+    /// Saves immediately to disk — the file watcher will also fire from this same write,
+    /// which just reloads the identical data a moment later (harmless).</summary>
+    public void AddSyslogPattern(SyslogSignature pattern)
+    {
+        var updated = _syslogPatterns.ToList();
+        updated.RemoveAll(p => p.Name == pattern.Name);
+        updated.Add(pattern);
+        _syslogPatterns = updated;
+        SyslogPatternStore.Save(updated);
+        OnError($"🔧 Syslog pattern added/updated: {pattern.Name} ({pattern.Patterns.Count} substrings)");
+    }
+
+    /// <summary>Removes a pattern by name. Returns false if no pattern had that name.</summary>
+    public bool RemoveSyslogPattern(string name)
+    {
+        var updated = _syslogPatterns.ToList();
+        bool removed = updated.RemoveAll(p => p.Name == name) > 0;
+        if (removed)
+        {
+            _syslogPatterns = updated;
+            SyslogPatternStore.Save(updated);
+            OnError($"🔧 Syslog pattern removed: {name}");
+        }
+        return removed;
     }
 
     /// <summary>Opens the detailed HTTP exchange log with MikroTik (creates it if it doesn't exist).</summary>
@@ -447,7 +513,7 @@ public class MainViewModel : INotifyPropertyChanged
         // parser/signatures against a real appliance without having sample data upfront.
         MikroTikDebugLog.Log($"[SYSLOG] {rawMessage}");
 
-        var alert = SyslogAnalyzer.Analyze(rawMessage);
+        var alert = SyslogAnalyzer.Analyze(rawMessage, _syslogPatterns);
         if (alert == null) return;
 
         var key = $"{alert.SrcIp}|{alert.Category}";

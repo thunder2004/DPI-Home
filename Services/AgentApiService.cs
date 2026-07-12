@@ -26,7 +26,8 @@ public class AgentApiService : IDisposable
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter() } // ThreatLevel as "High"/"Critical", matches syslog-patterns.json
     };
 
     public AgentApiService(MainViewModel vm, string apiKey)
@@ -110,6 +111,11 @@ public class AgentApiService : IDisposable
                 "/api/rdp-settings" when method == "POST" => (await SetRdpSettings(ctx), 200),
                 "/api/excluded-ports" when method == "POST" => (await SetExcludedPorts(ctx), 200),
                 "/api/syslog" when method == "POST" => (await SetSyslog(ctx), 200),
+
+                "/api/syslog-patterns" when method == "GET" => (GetSyslogPatterns(), 200),
+                "/api/syslog-patterns" when method == "POST" => (await AddSyslogPattern(ctx), 200),
+                var p when p.StartsWith("/api/syslog-patterns/") && method == "DELETE" =>
+                    (RemoveSyslogPattern(p["/api/syslog-patterns/".Length..]), 200),
 
                 _ => ("{\"error\":\"Not Found\"}", 404)
             };
@@ -350,6 +356,39 @@ public class AgentApiService : IDisposable
             _vm.SyslogEnabled = payload.Enabled;
         });
         return JsonSerializer.Serialize(new { syslogEnabled = _vm.SyslogEnabled, syslogListening = _vm.SyslogListening });
+    }
+
+    /// <summary>Lists the current syslog attack patterns (file-backed, see SyslogPatternStore —
+    /// not hardcoded, so an agent that spots a new probe pattern can add one here instead of
+    /// needing a code change).</summary>
+    private string GetSyslogPatterns()
+    {
+        var patterns = _vm.GetSyslogPatterns();
+        return JsonSerializer.Serialize(new { patterns, total = patterns.Count });
+    }
+
+    /// <summary>Adds a new pattern, or replaces an existing one with the same name.
+    /// Body: {name, category, level, description, patterns:[string]}. Saved to disk
+    /// immediately — no restart needed, and syslog-patterns.json can also be edited by
+    /// hand (it's hot-reloaded via a file watcher either way).</summary>
+    private async Task<string> AddSyslogPattern(HttpListenerContext ctx)
+    {
+        using var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
+        var body = await reader.ReadToEndAsync();
+        var pattern = JsonSerializer.Deserialize<SyslogSignature>(body, JsonOpts);
+
+        if (pattern == null || string.IsNullOrWhiteSpace(pattern.Name) || pattern.Patterns.Count == 0)
+            return JsonSerializer.Serialize(new { error = "name and patterns[] (non-empty) required" });
+
+        _vm.AddSyslogPattern(pattern);
+        return JsonSerializer.Serialize(new { added = pattern.Name, patternCount = pattern.Patterns.Count });
+    }
+
+    private string RemoveSyslogPattern(string name)
+    {
+        name = Uri.UnescapeDataString(name);
+        bool removed = _vm.RemoveSyslogPattern(name);
+        return JsonSerializer.Serialize(new { removed, name });
     }
 
     /// <summary>

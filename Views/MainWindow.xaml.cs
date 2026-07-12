@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     {
         if (DataContext is MainViewModel vm)
             vm.SaveHistoryNow();
+        DPI_Home.Services.SyslogPatternStore.StopWatching();
     }
 
     /// <summary>

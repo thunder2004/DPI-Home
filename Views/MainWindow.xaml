@@ -208,6 +208,13 @@
                             Margin="0,4,8,4" Cursor="Hand"
                             ToolTip="Open detailed log — MikroTik HTTP exchange and raw syslog lines — for diagnostics if rules/blocks don't appear on the router, or to see what a syslog source actually sends"/>
 
+                    <Button Command="{Binding OpenSyslogPatternsCommand}"
+                            Content="📝 Patterns" Width="90" Height="28" FontSize="11"
+                            Background="#37474F" Foreground="#B0BEC5"
+                            materialDesign:ButtonAssist.CornerRadius="6"
+                            Margin="0,4,8,4" Cursor="Hand"
+                            ToolTip="Open syslog-patterns.json — attack patterns for the syslog analyzer, editable by hand or via the Agent API, hot-reloaded without a restart"/>
+
                     <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="0,4,8,4">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="Excl. ports:" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="0,0,6,0"
