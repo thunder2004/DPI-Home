@@ -23,6 +23,7 @@ public class MainViewModel : INotifyPropertyChanged
     private readonly object _httpsLock = new();
     private AgentApiService? _agentApi;
     private string _agentApiKey = "";
+    private bool _apiConnected;
 
     private TrafficStats _stats = new();
     private bool _isConnected;
@@ -165,11 +166,18 @@ public class MainViewModel : INotifyPropertyChanged
 
     public string AgentApiKey => _agentApiKey;
 
+    public bool ApiConnected
+    {
+        get => _apiConnected;
+        private set { _apiConnected = value; OnPropertyChanged(); }
+    }
+
     /// <summary>Start the Agent API and log the URL+key to the UI alert panel.</summary>
     public void StartApi()
     {
         if (_agentApi == null) return;
         var msg = _agentApi.Start();
+        ApiConnected = true;
         OnError(msg);
     }
 
@@ -214,28 +222,28 @@ public class MainViewModel : INotifyPropertyChanged
             _netCtx.AddWanIp(settings.WanIp);
             _wanIp = settings.WanIp;
         }
-        _analyzer = new TrafficAnalyzer(_netCtx)
-        {
-            RdpThreshold = _rdpThreshold,
-            RdpWindowSeconds = _rdpWindowMinutes * 60
-        };
+        _analyzer = new TrafficAnalyzer(_netCtx);
+        // Packet-flow debug log (every 100 packets) goes to the debug output, not the
+        // user-facing alert feed — routing it through OnError previously mixed harmless
+        // "[DEBUG] [PKT] Total: N ..." noise into the same list as real security alerts.
+        _analyzer.OnDebugLog += msg => System.Diagnostics.Debug.WriteLine(msg);
+        _analyzer.RdpThreshold = _rdpThreshold;
+        _analyzer.RdpWindowSeconds = _rdpWindowMinutes * 60;
         _aggregator = new AlertAggregator();
 
         _analyzer.OnAlert += OnAlert;
         _aggregator.OnAlertGroup += OnAlertGroup;
         _analyzer.OnHttpsServerGroupUpdate += OnHttpsServerGroupUpdate;
 
-        // Load API key (generate one if missing)
-        var s = SettingsService.Load();
-        if (string.IsNullOrWhiteSpace(s.AgentApiKey))
+        // Load or generate the Agent API key. Reuses the settings instance already
+        // loaded above instead of reading settings.json a second time.
+        if (string.IsNullOrWhiteSpace(settings.AgentApiKey))
         {
-            s.AgentApiKey = GenerateApiKey();
-            SettingsService.Save(s);
+            settings.AgentApiKey = GenerateApiKey();
+            SettingsService.Save(settings);
         }
-        _agentApi = new AgentApiService(this, s.AgentApiKey);
-        _agentApiKey = s.AgentApiKey;
-        // ponytail: ensure key is persisted before Window_Loaded fires (save is idempotent)
-        SettingsService.Save(s);
+        _agentApi = new AgentApiService(this, settings.AgentApiKey);
+        _agentApiKey = settings.AgentApiKey;
 
         _statsTimer = new DispatcherTimer
         {
@@ -563,7 +571,7 @@ public class MainViewModel : INotifyPropertyChanged
 
     private static string GenerateApiKey()
     {
-        // ponytail: 32 bytes = 43 base64 chars, URL-safe. Good enough for an API key.
+        // Note: 32 bytes = 43 base64 chars, URL-safe. Good enough for an API key.
         var bytes = new byte[32];
         using var rng = System.Security.Cryptography.RandomNumberGenerator.Create();
         rng.GetBytes(bytes);

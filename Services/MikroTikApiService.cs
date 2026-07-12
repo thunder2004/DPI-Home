@@ -170,7 +170,7 @@ public class MikroTikApiService
             MikroTikDebugLog.Log($"  -> {checkJson}");
 
             var existing = JsonSerializer.Deserialize<List<MikroTikAddressList>>(checkJson, JsonOpts);
-            // ponytail: filter by list name — IP may be in Home_net or other lists,
+            // Note: filter by list name — the IP may be in Home_net or other lists,
             // which doesn't mean it's already in DPI-Home-Blocked. Without this check,
             // blocking was silently skipped for any IP already in any address-list.
             var alreadyBlocked = existing?.FirstOrDefault(e => e.List == "DPI-Home-Blocked");

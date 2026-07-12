@@ -111,8 +111,18 @@ public class AgentApiService : IDisposable
 
         ctx.Response.StatusCode = statusCode;
         ctx.Response.ContentType = "application/json";
-        await ctx.Response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes(response));
-        ctx.Response.Close();
+        try
+        {
+            await ctx.Response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes(response));
+            ctx.Response.Close();
+        }
+        catch
+        {
+            // Client disconnected mid-response or similar transient I/O error.
+            // Handle() is async void (required by HttpListener's callback shape),
+            // so an unhandled exception here would propagate uncaught and could
+            // crash the app — never let a single client's connection issue do that.
+        }
     }
 
     private async Task<string> GetBlocks()

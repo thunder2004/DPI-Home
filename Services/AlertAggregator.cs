@@ -12,7 +12,7 @@ public class AlertAggregator : IDisposable
     private readonly Timer _flushTimer;
     private readonly TimeSpan _groupWindow = TimeSpan.FromSeconds(30);
     private readonly object _flushLock = new();
-    // ponytail: throttle re-emits of same group to 300ms — prevents UI flood on SYN flood / port scan
+    // Note: throttle re-emits of the same group to 300ms — prevents UI flood on SYN flood / port scan
     private readonly ConcurrentDictionary<string, DateTime> _lastEmit = new();
     private static readonly TimeSpan EmitInterval = TimeSpan.FromMilliseconds(300);
 
@@ -68,7 +68,7 @@ public class AlertAggregator : IDisposable
             }
         }
 
-        // ponytail: emit immediately so UI shows the alert right away.
+        // Note: emit immediately so the UI shows the alert right away.
         // Throttled per-group to 300ms — prevents UI flood on high-frequency attacks.
         var now = DateTime.UtcNow;
         if (!_lastEmit.TryGetValue(key, out var last) || now - last >= EmitInterval)
