@@ -128,26 +128,38 @@ public class MikroTikApiService
     }
 
     /// <summary>
-    /// Убеждается, что правило firewall для address-list существует
+    /// Убеждается, что правило firewall для address-list существует.
+    ///
+    /// ВАЖНО: правильное поле для матчинга источника по address-list в правиле drop —
+    /// "src-address-list" (через дефис). Раньше здесь было "address-list" в GET-запросе
+    /// проверки и "address_list" (с подчёркиванием) в теле создания — оба варианта не
+    /// являются валидным match-полем для action=drop в RouterOS (просто "address-list" —
+    /// это параметр ДЕЙСТВИЯ add-src-to-address-list, а не критерий для drop). Из-за этого
+    /// либо запрос создания отклонялся API (правило не создавалось, блокировка была
+    /// декоративной — IP добавлялся в список, но трафик не дропался), либо, если сервер
+    /// проигнорировал незнакомое поле, могло создаться правило БЕЗ УСЛОВИЙ ВООБЩЕ —
+    /// т.е. drop всего транзитного трафика в цепочке forward. Если такое правило уже
+    /// создалось на вашем роутере — удалите его вручную и переподключитесь заново.
     /// </summary>
     public async Task<string?> EnsureFirewallRuleAsync()
     {
         try
         {
-            var rulesJson = await _http.GetStringAsync("ip/firewall/filter?chain=forward&action=drop&address-list=DPI-Home-Blocked");
+            var rulesJson = await _http.GetStringAsync("ip/firewall/filter?chain=forward&action=drop&src-address-list=DPI-Home-Blocked");
             var existing = JsonSerializer.Deserialize<List<MikroTikFirewallRule>>(rulesJson, JsonOpts);
             if (existing != null && existing.Count > 0)
             {
                 return null; // правило уже есть
             }
 
-            // Создаём правило
-            var payload = new
+            // Создаём правило. Используем Dictionary, а не анонимный объект — C# не
+            // разрешает дефис в имени свойства, а RouterOS ждёт именно "src-address-list".
+            var payload = new Dictionary<string, object>
             {
-                chain = "forward",
-                action = "drop",
-                address_list = "DPI-Home-Blocked",
-                comment = "DPI-Home: блокировка подозрительных IP"
+                ["chain"] = "forward",
+                ["action"] = "drop",
+                ["src-address-list"] = "DPI-Home-Blocked",
+                ["comment"] = "DPI-Home: блокировка подозрительных IP"
             };
 
             var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
@@ -179,7 +191,9 @@ public class MikroTikFirewallRule
     public string Id { get; set; } = "";
     public string Chain { get; set; } = "";
     public string Action { get; set; } = "";
-    public string AddressList { get; set; } = "";
+
+    [JsonPropertyName("src-address-list")]
+    public string SrcAddressList { get; set; } = "";
 }
 
 public class MikroTikCloudInfo
