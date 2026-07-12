@@ -68,6 +68,23 @@
                         <TextBlock Text="{Binding ConnectionStatus}" FontSize="13" Foreground="#B0BEC5" VerticalAlignment="Center"/>
                     </StackPanel>
 
+                    <StackPanel Orientation="Horizontal" Margin="0,4,12,4" VerticalAlignment="Center"
+                                ToolTip="Agent API status — tools: dpi_status, dpi_alerts, dpi_blocks, dpi_unblock">
+                        <Ellipse Width="8" Height="8" Margin="0,0,5,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="#FF9800"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ApiConnected}" Value="True">
+                                            <Setter Property="Fill" Value="#4CAF50"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="API" FontSize="12" Foreground="#78909C" VerticalAlignment="Center"/>
+                    </StackPanel>
+
                     <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="0,4,12,4">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="Port:" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="0,0,6,0"/>
