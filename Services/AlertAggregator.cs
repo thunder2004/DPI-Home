@@ -4,7 +4,7 @@ using DPI_Home.Models;
 namespace DPI_Home.Services;
 
 /// <summary>
-/// Агрегатор алертов — группирует все события от одного IP в одну карточку
+/// Alert aggregator — groups all events from one IP into a single card
 /// </summary>
 public class AlertAggregator : IDisposable
 {
@@ -43,7 +43,7 @@ public class AlertAggregator : IDisposable
             if (alert.Level > group.MaxLevel)
                 group.MaxLevel = alert.Level;
 
-            // Обновляем статистику по категории
+            // Update per-category stats
             var catKey = string.IsNullOrEmpty(alert.ShortName) ? alert.Title : alert.ShortName;
             if (!group.Categories.ContainsKey(catKey))
             {
@@ -57,7 +57,7 @@ public class AlertAggregator : IDisposable
             if (alert.LevelIcon != group.Categories[catKey].Icon)
                 group.Categories[catKey].Icon = alert.LevelIcon;
 
-            // Мержим порты (для Port Scan и других атак с целевыми портами)
+            // Merge ports (for Port Scan and other attacks with target ports)
             if (alert.ScannedPorts != null)
             {
                 foreach (var port in alert.ScannedPorts)
@@ -116,10 +116,10 @@ public class AlertAggregator : IDisposable
 
     private static string BuildKey(Alert alert)
     {
-        // System-события держим в одной служебной карточке.
+        // System events go into a single service card.
         if (alert.SrcIp == "system") return "system";
-        // Разделяем по IP + категории: разные типы атак от одного IP не сливаются
-        // в одну неинформативную карточку, но однотипный флуд остаётся сгруппирован.
+        // Split by IP + category: different attack types from one IP don't merge
+        // into one uninformative card, but same-type flood stays grouped.
         var cat = string.IsNullOrEmpty(alert.Category) ? "?" : alert.Category;
         return $"{alert.SrcIp}|{cat}";
     }

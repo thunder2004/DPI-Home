@@ -4,25 +4,25 @@ using DPI_Home.Models;
 namespace DPI_Home.Services;
 
 /// <summary>
-/// Анализатор трафика. Получает пакеты от парсера, прогоняет через сигнатуры и
-/// поведенческие детекторы, генерирует алерты.
+/// Traffic analyzer. Receives packets from the parser, runs them through signatures
+/// and behavioral detectors, generates alerts.
 ///
-/// Исправления по сравнению с оригиналом:
-///  - Направление трафика через NetworkContext (замена IsPrivateIp).
-///  - Port Scan: только реальные пробы (SYN/stealth/UDP), не любой пакет; эфемерные
-///    порты (>=49152) исключены — иначе ответный UDP-трафик (QUIC/HTTP3) от занятого
-///    CDN даёт ложный "скан" наших же случайных исходящих портов.
-///  - Brute Force: только SYN без ACK (активная сессия больше не триггерит).
-///  - SYN Flood: ключ по ЖЕРТВЕ, считаем уникальные источники (поддержка спуфинга).
-///  - Все состояния чистятся периодически (eviction), словари не растут бесконечно.
-///  - Сигнатуры вынесены в ThreatSignatures, состояния — в DetectionState.
-///  - Единая шкала Score через ThreatSignatures.ScoreFor.
-///  - Рейт-лимит сигнатурных алертов: один алерт на (srcIp|sig) за 5 секунд.
-///  - Фикс ошибки Now/UtcNow в очистке HTTPS-соединений.
-///  - HTTPS server group: счётчики инкрементальные (O(1) на пакет), UI-событие
-///    троттлится 300мс/сервер — раньше полный LINQ-скан всех соединений на КАЖДЫЙ
-///    пакет 443 порта + синхронный Dispatcher.Invoke на каждый вызов вызывали
-///    многосекундные фризы UI при реальной нагрузке (HTTPS/QUIC — большая часть трафика).
+/// Improvements over the original:
+///  - Traffic direction via NetworkContext (replaces IsPrivateIp).
+///  - Port Scan: only real probes (SYN/stealth/UDP), not any packet; ephemeral
+///    ports (>=49152) excluded — otherwise reply UDP traffic (QUIC/HTTP3) from a busy
+///    CDN gives a false "scan" of our own random outgoing ports.
+///  - Brute Force: only SYN without ACK (active session no longer triggers).
+///  - SYN Flood: key by VICTIM, count unique sources (spoofing support).
+///  - All states are periodically evicted, dictionaries don't grow indefinitely.
+///  - Signatures moved to ThreatSignatures, states to DetectionState.
+///  - Unified Score scale via ThreatSignatures.ScoreFor.
+///  - Rate-limit signature alerts: one alert per (srcIp|sig) per 5 seconds.
+///  - Fixed Now/UtcNow bug in HTTPS connection cleanup.
+///  - HTTPS server group: incremental counters (O(1) per packet), UI event
+///    throttled 300ms/server — previously a full LINQ scan of all connections on EVERY
+///    443-port packet + synchronous Dispatcher.Invoke per call caused multi-second
+///    UI freezes under real load (HTTPS/QUIC is the majority of traffic).
 /// </summary>
 public class TrafficAnalyzer
 {
@@ -32,30 +32,33 @@ public class TrafficAnalyzer
     private readonly ConcurrentDictionary<string, PortScanState> _portScans = new();
     private readonly ConcurrentDictionary<string, BruteForceState> _bruteForce = new();
     private readonly ConcurrentDictionary<string, SynFloodState> _synFloods = new();
+    private readonly ConcurrentDictionary<string, RdpAuthState> _rdpAuth = new();
     private readonly ConcurrentDictionary<string, HttpsConnection> _httpsConnections = new();
     private readonly ConcurrentDictionary<string, HttpsServerGroup> _httpsServerGroups = new();
     private readonly object _httpsGroupLock = new();
 
-    // Рейт-лимит: не чаще одного сигнатурного алерта на (srcIp|sig) за окно.
+    // Rate-limit: at most one signature alert per (srcIp|sig) per window.
     private readonly ConcurrentDictionary<string, DateTime> _sigRateLimit = new();
     private static readonly TimeSpan SigRateLimitWindow = TimeSpan.FromSeconds(5);
 
-    // Троттлинг UI-события по HTTPS-группе: раньше UpdateHttpsServerGroup дёргался
-    // (и синхронно блокировал UI через Dispatcher.Invoke) на КАЖДЫЙ пакет 443 порта —
-    // при реальном трафике (HTTPS/QUIC — большая часть всего трафика) это тысячи
-    // вызовов в секунду с полным O(n)-сканированием словаря соединений, отсюда фризы UI.
+    // Throttle HTTPS-group UI event: previously UpdateHttpsServerGroup was called
+    // (and synchronously blocked UI via Dispatcher.Invoke) on EVERY 443-port packet —
+    // under real traffic (HTTPS/QUIC is the majority of all traffic) this meant thousands
+    // of calls per second with full O(n) dictionary scan, causing UI freezes.
     private readonly ConcurrentDictionary<string, DateTime> _httpsGroupLastEmit = new();
     private static readonly TimeSpan HttpsGroupEmitInterval = TimeSpan.FromMilliseconds(300);
 
     private const int PortScanThreshold = 20;
     private const int BruteForceThreshold = 10;
     private const int SynFloodThreshold = 100;
-    private const int SynFloodSourceThreshold = 30; // уникальных источников — признак спуфинга
+    private const int SynFloodSourceThreshold = 30; // unique sources — spoofing indicator
+    public int RdpThreshold { get; set; } = 3;
+    public int RdpWindowSeconds { get; set; } = 300;
     private const int WindowSeconds = 10;
 
-    // Нижняя граница эфемерного диапазона портов (RFC 6335 / большинство OC).
-    // Реальный сканер, ищущий открытые сервисы у нас, никогда не пойдёт в этот
-    // диапазон — там нет сервисов, только наши исходящие соединения.
+    // Lower bound of the ephemeral port range (RFC 6335 / most OSes).
+    // A real scanner looking for open services on our host would never go into this
+    // range — there are no services there, only our outgoing connections.
     private const int EphemeralPortMin = 49152;
 
     private DateTime _lastEviction = DateTime.UtcNow;
@@ -77,7 +80,7 @@ public class TrafficAnalyzer
 
     public void Analyze(RawPacket packet)
     {
-        // Направление трафика — единожды, осознанно (заменяет IsPrivateIp).
+        // Traffic direction — once, deliberately (replaces IsPrivateIp).
         packet.Direction = _net.Classify(packet.SrcIp, packet.DstIp);
 
         bool relevant = packet.Direction is TrafficDirection.Inbound or TrafficDirection.Internal;
@@ -88,15 +91,16 @@ public class TrafficAnalyzer
             DetectPortScan(packet);
             DetectBruteForce(packet);
             DetectSynFlood(packet);
+            DetectRdpBruteForce(packet);
         }
 
-        // HTTPS-трекинг ведём в обе стороны — иначе SYN-ACK не сопоставится.
+        // HTTPS tracking in both directions — otherwise SYN-ACK won't match.
         TrackHttpsConnection(packet);
 
         MaybeEvict();
     }
 
-    // ── Сигнатурный анализ ──────────────────────────────────────────────────
+    // ── Signature analysis ──────────────────────────────────────────────────
 
     private void RunSignatures(RawPacket packet)
     {
@@ -135,21 +139,21 @@ public class TrafficAnalyzer
         return false;
     }
 
-    // ── Поведенческие детекторы ─────────────────────────────────────────────
+    // ── Behavioral detectors ────────────────────────────────────────────────
 
     /// <summary>
-    /// Port Scan: только реальные пробы.
-    /// SYN без ACK, NULL/FIN/XMAS stealth, UDP-датаграммы — а не любой пакет.
-    /// Это устраняет false positive от занятого CDN, отвечающего на 20+ наших портов.
+    /// Port Scan: only real probes.
+    /// SYN without ACK, NULL/FIN/XMAS stealth, UDP datagrams — not any packet.
+    /// This eliminates false positives from a busy CDN replying to 20+ of our ports.
     /// </summary>
     private void DetectPortScan(RawPacket packet)
     {
         if (string.IsNullOrEmpty(packet.SrcIp) || packet.DstPort == 0) return;
         if (packet.IsNonFirstFragment) return;
 
-        // Порты в эфемерном диапазоне — это, как правило, НАШИ исходящие соединения,
-        // а не сервисы, которые мог бы искать сканер. Ответный UDP-трафик от занятого
-        // сервиса (QUIC/HTTP3, DNS-резолверы и т.д.) иначе даёт ложный port-скан.
+        // Ports in the ephemeral range are typically OUR outgoing connections,
+        // not services a scanner would look for. Reply UDP traffic from a busy
+        // service (QUIC/HTTP3, DNS resolvers, etc.) otherwise gives a false port-scan.
         if (packet.DstPort >= EphemeralPortMin) return;
 
         bool isProbe;
@@ -183,9 +187,9 @@ public class TrafficAnalyzer
                     Timestamp = DateTime.Now,
                     Level = ThreatLevel.High,
                     Category = "Port Scan",
-                    Title = "Обнаружен порт-скан",
+                    Title = "Port scan detected",
                     ShortName = "Port Scan",
-                    Description = $"IP {packet.SrcIp}: {unique} уникальных портов за {WindowSeconds}с",
+                    Description = $"IP {packet.SrcIp}: {unique} unique ports in {WindowSeconds}s",
                     SrcIp = packet.SrcIp,
                     DstIp = packet.DstIp,
                     Protocol = packet.Protocol,
@@ -199,8 +203,8 @@ public class TrafficAnalyzer
     }
 
     /// <summary>
-    /// Brute Force: только новые SYN (без ACK).
-    /// Иначе любая активная SSH/RDP-сессия (10+ пакетов за 10с) = Critical false positive.
+    /// Brute Force: only new SYN (without ACK).
+    /// Otherwise any active SSH/RDP session (10+ packets in 10s) = Critical false positive.
     /// </summary>
     private void DetectBruteForce(RawPacket packet)
     {
@@ -231,9 +235,9 @@ public class TrafficAnalyzer
                     Timestamp = DateTime.Now,
                     Level = ThreatLevel.Critical,
                     Category = "Brute Force",
-                    Title = $"Brute-force на {portName} (:{packet.DstPort})",
+                    Title = $"Brute-force on {portName} (:{packet.DstPort})",
                     ShortName = $"BruteForce {portName}",
-                    Description = $"IP {packet.SrcIp}: {state.InWindow(WindowSeconds)} попыток за {WindowSeconds}с на {portName}",
+                    Description = $"IP {packet.SrcIp}: {state.InWindow(WindowSeconds)} attempts in {WindowSeconds}s on {portName}",
                     SrcIp = packet.SrcIp,
                     DstIp = packet.DstIp,
                     DstPort = packet.DstPort,
@@ -248,9 +252,9 @@ public class TrafficAnalyzer
     }
 
     /// <summary>
-    /// SYN Flood: ключ — ЖЕРТВА (DstIp:DstPort), а не источник.
-    /// Считаем уникальные источники: много источников = спуфинг-флуд.
-    /// Раньше ключ был по SrcIp, который при спуфинге никогда не превышал порог.
+    /// SYN Flood: key is the VICTIM (DstIp:DstPort), not the source.
+    /// Count unique sources: many sources = spoofed flood.
+    /// Previously the key was by SrcIp, which under spoofing never exceeded the threshold.
     /// </summary>
     private void DetectSynFlood(RawPacket packet)
     {
@@ -277,11 +281,11 @@ public class TrafficAnalyzer
                     Timestamp = DateTime.Now,
                     Level = ThreatLevel.Critical,
                     Category = "SYN Flood",
-                    Title = $"SYN Flood на {packet.DstIp}:{packet.DstPort}",
+                    Title = $"SYN Flood on {packet.DstIp}:{packet.DstPort}",
                     ShortName = $"SYN Flood :{packet.DstPort}",
                     Description = spoofed
-                        ? $"{syns} SYN/{WindowSeconds}с от {sources} источников (спуфинг) → {packet.DstIp}:{packet.DstPort}"
-                        : $"{syns} SYN/{WindowSeconds}с от {sources} источников → {packet.DstIp}:{packet.DstPort}",
+                        ? $"{syns} SYN/{WindowSeconds}s from {sources} sources (spoofed) → {packet.DstIp}:{packet.DstPort}"
+                        : $"{syns} SYN/{WindowSeconds}s from {sources} sources → {packet.DstIp}:{packet.DstPort}",
                     SrcIp = packet.SrcIp,
                     DstIp = packet.DstIp,
                     DstPort = packet.DstPort,
@@ -296,11 +300,57 @@ public class TrafficAnalyzer
         }
     }
 
-    // ── HTTPS-трекинг ───────────────────────────────────────────────────────
+    // ── HTTPS tracking ───────────────────────────────────────────────────────
 
     /// <summary>
-    /// Счётчики группы изменяются инкрементально при каждом пакете (O(1)),
-    /// а не пересчитываются полным сканом всех соединений (было O(n) на каждый пакет).
+    /// RDP Brute Force: 3 new TCP connections (SYN without ACK) to port 3389
+    /// from one SrcIp in 5 minutes. Window is wider than other detectors because
+    /// an attacker usually doesn't spam SYN-flood, but methodically guesses passwords.
+    /// Level Critical — blocked by auto-block (if enabled).
+    /// </summary>
+    private void DetectRdpBruteForce(RawPacket packet)
+    {
+        if (!packet.IsTcp || !packet.TcpFlagsParsed) return;
+        if (packet.DstPort != 3389) return;
+
+        bool isSyn = (packet.TcpFlags & 0x02) != 0;
+        bool isAck = (packet.TcpFlags & 0x10) != 0;
+        if (!isSyn || isAck) return; // only new connections
+
+        var key = packet.SrcIp;
+        var state = _rdpAuth.GetOrAdd(key, _ => new RdpAuthState());
+        lock (state)
+        {
+            state.Purge(RdpWindowSeconds);
+            state.AddAttempt(packet.Timestamp);
+            int count = state.InWindow(RdpWindowSeconds);
+
+            if (count >= RdpThreshold)
+            {
+                EmitAlert(new Alert
+                {
+                    Timestamp = DateTime.Now,
+                    Level = ThreatLevel.Critical,
+                    Category = "RDP Brute Force",
+                    Title = $"RDP password brute-force from {packet.SrcIp}",
+                    ShortName = "RDP BruteForce",
+                    Description = $"IP {packet.SrcIp}: {count} connection attempts to RDP (3389) in {RdpWindowSeconds / 60} min",
+                    SrcIp = packet.SrcIp,
+                    DstIp = packet.DstIp,
+                    DstPort = 3389,
+                    Protocol = "TCP",
+                    PacketCount = state.TotalAttempts,
+                    Score = ThreatSignatures.ScoreFor(ThreatLevel.Critical),
+                    ScannedPorts = new HashSet<int> { 3389 }
+                });
+                state.Reset();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Group counters are incremented per packet (O(1)),
+    /// not recalculated by a full scan of all connections (was O(n) per packet).
     /// </summary>
     private void TrackHttpsConnection(RawPacket packet)
     {
@@ -327,12 +377,12 @@ public class TrafficAnalyzer
 
         if (isSyn && !isAck)
         {
-            // Важно: панель «HTTPS-соединения» должна показывать только входящие соединения
-            // (кто-то из WAN стучится к нашему сервису на 443), а НЕ наши собственные
-            // исходящие подключения (браузер → CDN/сайты). Направление именно этого,
-            // первого SYN-пакета однозначно говорит, кто инициатор: Outbound — это мы как клиент,
-            // Inbound — кто-то снаружи открывает соединение к нам. Без этой проверки сюда попадали
-            // и собственные выходы в интернет (например, Cloudflare от QUIC/HTTPS сёрфинга).
+            // Important: the "HTTPS connections" panel must show only inbound connections
+            // (someone from WAN knocking on our service on 443), NOT our own
+            // outgoing connections (browser → CDN/sites). The direction of this
+            // first SYN packet unambiguously says who the initiator is: Outbound = us as client,
+            // Inbound = someone outside opening a connection to us. Without this check,
+            // our own internet traffic also ended up here (e.g. Cloudflare from QUIC/HTTPS browsing).
             if (packet.Direction != TrafficDirection.Inbound) return;
 
             bool isNew = false;
@@ -341,7 +391,7 @@ public class TrafficAnalyzer
                 isNew = true;
                 return new HttpsConnection
                 {
-                    Timestamp = DateTime.UtcNow, // согласовано с eviction-логикой (была ошибка Now vs UtcNow)
+                    Timestamp = DateTime.UtcNow, // consistent with eviction logic (was Now vs UtcNow bug)
                     SrcIp = packet.SrcIp,
                     DstIp = packet.DstIp,
                     SrcPort = packet.SrcPort,
@@ -354,13 +404,13 @@ public class TrafficAnalyzer
             conn.PacketCount++;
             conn.BytesTransferred += packet.PacketLength;
 
-            // Группируем по КЛИЕНТУ, а не по серверу: после фильтра "только Inbound"
-            // сервер всегда равен нашему собственному WAN-IP, так что группировка по нему
-            // схлопнула бы всех разных атакующих в одну строку с нашим же адресом.
+            // Group by CLIENT, not server: after the "inbound only" filter,
+            // server always equals our own WAN-IP, so grouping by it
+            // would collapse all different attackers into one line with our address.
             if (isNew)
                 AdjustClientGroup(clientIp, g => { g.SynSentCount++; g.TotalConnections++; });
             else
-                AdjustClientGroup(clientIp, _ => { }); // ретрансмит SYN — счётчики состояния не меняются
+                AdjustClientGroup(clientIp, _ => { }); // SYN retransmit — state counters don't change
 
             OnHttpsConnectionUpdate?.Invoke(conn);
         }
@@ -381,7 +431,7 @@ public class TrafficAnalyzer
             {
                 var prevState = conn.State;
                 conn.State = ConnectionState.Closed;
-                conn.Timestamp = DateTime.UtcNow; // время закрытия — для TTL при eviction
+                conn.Timestamp = DateTime.UtcNow; // close time — for TTL during eviction
                 conn.PacketCount++;
                 conn.BytesTransferred += packet.PacketLength;
                 AdjustClientGroup(clientIp, g =>
@@ -395,9 +445,9 @@ public class TrafficAnalyzer
         }
         else
         {
-            // Обычный дата-пакет в рамках уже известного соединения — самое частое событие
-            // при реальной нагрузке. Счётчики состояния не меняются, поэтому обновляем
-            // только LastSeen через троттлированный emit, без пересчёта всего словаря.
+            // Regular data packet within an existing connection — the most common event
+            // under real load. State counters don't change, so we update
+            // only LastSeen via a throttled emit, without rescanning the whole dictionary.
             if (_httpsConnections.TryGetValue(connKey, out var conn))
             {
                 conn.PacketCount++;
@@ -410,7 +460,7 @@ public class TrafficAnalyzer
             EvictClosedHttpsConnections();
     }
 
-    /// <summary>Точечно откатывает закрытые соединения старше 5 минут, уменьшая счётчики групп.</summary>
+    /// <summary>Selectively evicts closed connections older than 5 minutes, decrementing group counters.</summary>
     private void EvictClosedHttpsConnections()
     {
         var cutoff = DateTime.UtcNow.AddMinutes(-5);
@@ -432,9 +482,9 @@ public class TrafficAnalyzer
     }
 
     /// <summary>
-    /// Мутирует группу по КЛИЕНТУ (внешнему IP, который к нам подключается) и испускает
-    /// UI-событие с троттлингом 300мс на клиента — сама мутация счётчиков всегда O(1)
-    /// и ничем не ограничена, троттлится только перерисовка UI.
+    /// Mutates the per-CLIENT group (external IP connecting to us) and emits a
+    /// UI event throttled at 300ms per client — the counter mutation is always O(1)
+    /// and unlimited, only the UI redraw is throttled.
     /// </summary>
     private void AdjustClientGroup(string clientIp, Action<HttpsServerGroup> mutate)
     {
@@ -460,7 +510,7 @@ public class TrafficAnalyzer
         }
     }
 
-    // ── Eviction — периодическая чистка протухших состояний ────────────────
+    // ── Eviction — periodic cleanup of stale states ────────────────
 
     private void MaybeEvict()
     {
@@ -476,6 +526,9 @@ public class TrafficAnalyzer
 
         foreach (var kv in _synFloods)
             if (kv.Value.IsStale(StateTtl)) _synFloods.TryRemove(kv.Key, out _);
+
+        foreach (var kv in _rdpAuth)
+            if (kv.Value.IsStale(StateTtl)) _rdpAuth.TryRemove(kv.Key, out _);
 
         var rlCutoff = now - StateTtl;
         foreach (var kv in _sigRateLimit)

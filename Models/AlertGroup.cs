@@ -1,7 +1,7 @@
 namespace DPI_Home.Models;
 
 /// <summary>
-/// Агрегированный алерт — все события от одного IP
+/// Aggregated alert — all events from one IP
 /// </summary>
 public class AlertGroup
 {
@@ -54,7 +54,7 @@ public class AlertGroup
             var joined = string.Join(" | ", parts);
             var total = Categories.Values.Sum(c => c.Count);
             if (total > 0)
-                joined = $"📦 {total:N0} событий\n" + joined;
+                joined = $"📦 {total:N0} events\n" + joined;
             return joined;
         }
     }
@@ -73,12 +73,12 @@ public class AlertGroup
     }
 
     /// <summary>
-    /// Форматирует список портов в компактный вид: 21-25, 80, 443
+    /// Formats a port list into a compact view: 21-25, 80, 443
     /// </summary>
     private static string FormatPorts(SortedSet<int> ports)
     {
         if (ports.Count == 0) return "";
-        if (ports.Count > 15) return $"{ports.Min}-{ports.Max} ({ports.Count} портов)";
+        if (ports.Count > 15) return $"{ports.Min}-{ports.Max} ({ports.Count} ports)";
 
         var ranges = new List<string>();
         var sorted = ports.ToList();
@@ -104,10 +104,10 @@ public class AlertGroup
 
     public string CountLabel => TotalCount switch
     {
-        1 => "1 раз",
-        <= 10 => $"{TotalCount} раз",
-        <= 100 => $"{TotalCount} раз",
-        _ => $"{TotalCount:N0} раз"
+        1 => "1x",
+        <= 10 => $"{TotalCount}x",
+        <= 100 => $"{TotalCount}x",
+        _ => $"{TotalCount:N0}x"
     };
 }
 

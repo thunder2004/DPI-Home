@@ -4,7 +4,7 @@
         xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
         xmlns:models="clr-namespace:DPI_Home.Models"
         xmlns:viewmodels="clr-namespace:DPI_Home.ViewModels"
-        Title="DPI Home — Анализатор трафика MikroTik"
+        Title="DPI Home — MikroTik Traffic Analyzer"
         Height="900" Width="1400"
         MinHeight="600" MinWidth="1000"
         WindowStartupLocation="CenterScreen"
@@ -58,7 +58,7 @@
                     <TextBlock Text="🛡️" FontSize="28" Margin="0,0,12,0"/>
                     <StackPanel>
                         <TextBlock Text="DPI Home" FontSize="22" FontWeight="Bold" Foreground="#E8EAF6"/>
-                        <TextBlock Text="Анализатор трафика MikroTik" FontSize="12" Foreground="#90CAF9" Margin="0,-2,0,0"/>
+                        <TextBlock Text="MikroTik Traffic Analyzer" FontSize="12" Foreground="#90CAF9" Margin="0,-2,0,0"/>
                     </StackPanel>
                 </StackPanel>
 
@@ -70,7 +70,7 @@
 
                     <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="0,4,12,4">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="Порт:" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBlock Text="Port:" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="0,0,6,0"/>
                             <TextBlock Text="{Binding ListenPort}" FontSize="13" Foreground="#64B5F6" FontWeight="Bold" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Border>
@@ -81,11 +81,11 @@
                             <Style TargetType="Button" BasedOn="{StaticResource MaterialDesignRaisedButton}">
                                 <Setter Property="Background" Value="#4CAF50"/>
                                 <Setter Property="Foreground" Value="White"/>
-                                <Setter Property="Content" Value="▶ Старт"/>
+                                <Setter Property="Content" Value="▶ Start"/>
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsConnected}" Value="True">
                                         <Setter Property="Background" Value="#F44336"/>
-                                        <Setter Property="Content" Value="■ Стоп"/>
+                                        <Setter Property="Content" Value="■ Stop"/>
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -108,44 +108,73 @@
                                      Background="#0D1B2A" Foreground="White" BorderThickness="0"
                                      materialDesign:HintAssist.Hint="pass" Margin="2,0"/>
                             <Button Command="{Binding ConnectMikrotikCommand}"
-                                    Content="🔗" Width="32" Height="24" FontSize="14"
+                                    Width="112" Height="28" FontSize="11" FontWeight="SemiBold"
                                     Background="#37474F" Foreground="White"
                                     materialDesign:ButtonAssist.CornerRadius="4"
-                                    Margin="4,0,0,0" Cursor="Hand"
-                                    ToolTip="Подключиться к MikroTik API"/>
+                                    Margin="6,0,0,0" Cursor="Hand"
+                                    ToolTip="Connect to MikroTik API">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource MaterialDesignRaisedButton}">
+                                        <Setter Property="Content" Value="🔗 Connect"/>
+                                        <Setter Property="Background" Value="#37474F"/>
+                                        <Setter Property="Foreground" Value="White"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding MikrotikConnected}" Value="True">
+                                                <Setter Property="Content" Value="✅ Connected"/>
+                                                <Setter Property="Background" Value="#2E7D32"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
                         </StackPanel>
                     </Border>
 
                     <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="8,4,0,4">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="WAN IP:" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="0,0,6,0"
-                                       ToolTip="Публичный адрес роутера. Без него входящие атаки на ваш WAN-IP не детектируются (Direction=Unknown). Определяется автоматически при подключении к MikroTik (IP Cloud) либо вводится вручную."/>
+                                       ToolTip="Router public address. Without it, inbound attacks on your WAN-IP are not detected (Direction=Unknown). Auto-detected on MikroTik connect (IP Cloud) or enter manually."/>
                             <TextBox Text="{Binding WanIp, UpdateSourceTrigger=PropertyChanged}" Width="100" FontSize="12"
                                      Background="#0D1B2A" Foreground="White" BorderThickness="0"
-                                     materialDesign:HintAssist.Hint="напр. 203.0.113.7"/>
+                                     materialDesign:HintAssist.Hint="e.g. 203.0.113.7"/>
                             <Button Command="{Binding ApplyWanIpCommand}"
                                     Content="✔" Width="28" Height="24" FontSize="13"
                                     Background="#37474F" Foreground="#66BB6A"
                                     materialDesign:ButtonAssist.CornerRadius="4"
                                     Margin="4,0,0,0" Cursor="Hand"
-                                    ToolTip="Применить WAN-IP вручную"/>
+                                    ToolTip="Apply WAN IP manually"/>
                         </StackPanel>
                     </Border>
 
                     <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="8,4,0,4">
                         <StackPanel Orientation="Horizontal">
                             <CheckBox IsChecked="{Binding AutoBlockEnabled}" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                            <TextBlock Text="Автоблок" FontSize="12" Foreground="#B0BEC5" VerticalAlignment="Center"
-                                       ToolTip="Автоматически добавлять IP из Critical/High алертов в address-list DPI-Home-Blocked на MikroTik. Спуфленные SYN Flood не блокируются — SrcIp там ненадёжен."/>
+                            <TextBlock Text="Auto-block" FontSize="12" Foreground="#B0BEC5" VerticalAlignment="Center"
+                                       ToolTip="Automatically add IPs from Critical/High alerts to DPI-Home-Blocked address-list on MikroTik. Spoofed SYN Flood IPs are skipped — SrcIp is unreliable."/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="8,4,0,4">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="RDP:" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                            <TextBox Text="{Binding RdpThreshold, UpdateSourceTrigger=PropertyChanged}" Width="28" FontSize="12"
+                                     Background="#0D1B2A" Foreground="White" BorderThickness="0" VerticalAlignment="Center"
+                                     materialDesign:HintAssist.Hint="N"/>
+                            <TextBlock Text="conn. in" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="6,0,4,0"/>
+                            <TextBox Text="{Binding RdpWindowMinutes, UpdateSourceTrigger=PropertyChanged}" Width="28" FontSize="12"
+                                     Background="#0D1B2A" Foreground="White" BorderThickness="0" VerticalAlignment="Center"
+                                     materialDesign:HintAssist.Hint="min"/>
+                            <TextBlock Text="min" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="2,0,0,0"
+                                       ToolTip="Block IP after N new TCP connections to port 3389 within the specified time. Values are saved to settings.json."/>
                         </StackPanel>
                     </Border>
 
                     <Button Command="{Binding OpenDebugLogCommand}"
-                            Content="📄 Лог" Width="70" Height="28" FontSize="11"
+                            Content="📄 Log" Width="70" Height="28" FontSize="11"
                             Background="#37474F" Foreground="#B0BEC5"
                             materialDesign:ButtonAssist.CornerRadius="6"
                             Margin="8,4,0,4" Cursor="Hand"
-                            ToolTip="Открыть подробный лог HTTP-обмена с MikroTik (запросы, ответы, ошибки) — для диагностики, если правило/блокировка не появляются на роутере"/>
+                            ToolTip="Open detailed HTTP exchange log with MikroTik (requests, responses, errors) — for diagnostics if rules/blocks don't appear on the router"/>
                 </WrapPanel>
             </Grid>
         </Border>
@@ -162,49 +191,49 @@
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="📦" FontSize="18" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding Stats.TotalPackets, StringFormat={}{0:N0}}" FontSize="20" FontWeight="Bold" Foreground="#64B5F6" HorizontalAlignment="Center"/>
-                        <TextBlock Text="Пакетов" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Packets" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
                 <Border Grid.Column="1" Style="{StaticResource StatCardStyle}" Margin="4,0">
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="💀" FontSize="18" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding Stats.AlertsCritical}" FontSize="20" FontWeight="Bold" Foreground="#F44336" HorizontalAlignment="Center"/>
-                        <TextBlock Text="Критические" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Critical" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
                 <Border Grid.Column="2" Style="{StaticResource StatCardStyle}" Margin="4,0">
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="🔴" FontSize="18" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding Stats.AlertsHigh}" FontSize="20" FontWeight="Bold" Foreground="#FF5722" HorizontalAlignment="Center"/>
-                        <TextBlock Text="Высокие" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                        <TextBlock Text="High" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
                 <Border Grid.Column="3" Style="{StaticResource StatCardStyle}" Margin="4,0">
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="⚡" FontSize="18" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding Stats.AlertsMedium}" FontSize="20" FontWeight="Bold" Foreground="#FF9800" HorizontalAlignment="Center"/>
-                        <TextBlock Text="Средние" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Medium" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
                 <Border Grid.Column="4" Style="{StaticResource StatCardStyle}" Margin="4,0">
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="🚨" FontSize="18" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding Stats.AlertsToday}" FontSize="20" FontWeight="Bold" Foreground="#E040FB" HorizontalAlignment="Center"/>
-                        <TextBlock Text="Алертов" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Alerts" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
                 <Border Grid.Column="5" Style="{StaticResource StatCardStyle}" Margin="4,0">
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="🔒" FontSize="18" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding HttpsServerCount}" FontSize="20" FontWeight="Bold" Foreground="#66BB6A" HorizontalAlignment="Center"/>
-                        <TextBlock Text="HTTPS клиентов" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                        <TextBlock Text="HTTPS Clients" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
                 <Border Grid.Column="6" Style="{StaticResource StatCardStyle}" Margin="4,0">
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="✅" FontSize="18" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding HttpsEstablishedCount}" FontSize="20" FontWeight="Bold" Foreground="#4CAF50" HorizontalAlignment="Center"/>
-                        <TextBlock Text="Установлено" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Established" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
                 <Border Grid.Column="7" Style="{StaticResource StatCardStyle}" Margin="4,0,0,0">
@@ -221,7 +250,7 @@
                                 </Style>
                             </TextBlock.Style>
                         </TextBlock>
-                        <TextBlock Text="Статус" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Status" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding ConnectionStatus}" FontSize="10" Foreground="#B0BEC5" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
@@ -248,9 +277,9 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="📋 Лента событий" Style="{StaticResource SectionHeaderStyle}" Margin="0"/>
+                        <TextBlock Grid.Column="0" Text="📋 Event Feed" Style="{StaticResource SectionHeaderStyle}" Margin="0"/>
                         <Button Grid.Column="1" Command="{Binding ClearLogCommand}"
-                                Content="🗑 Очистить" FontSize="11" Height="28" Width="90"
+                                Content="🗑 Clear" FontSize="11" Height="28" Width="90"
                                 Background="#37474F" Foreground="#B0BEC5"
                                 BorderBrush="#546E7A" BorderThickness="1"
                                 materialDesign:ButtonAssist.CornerRadius="6" Cursor="Hand"/>
@@ -294,7 +323,7 @@
                                                         Background="#37474F" Foreground="#FF5722"
                                                         BorderThickness="0" Cursor="Hand" Margin="0,4,0,0"
                                                         materialDesign:ButtonAssist.CornerRadius="4"
-                                                        ToolTip="Заблокировать этот IP на MikroTik на 24ч"/>
+                                                        ToolTip="Block this IP on MikroTik for 24h"/>
                                             </StackPanel>
                                         </Grid>
                                     </Border>
@@ -314,7 +343,7 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Text="🔒 HTTPS соединения (порт 443)" Style="{StaticResource SectionHeaderStyle}"/>
+                    <TextBlock Grid.Row="0" Text="🔒 HTTPS Connections (port 443)" Style="{StaticResource SectionHeaderStyle}"/>
 
                     <Border Grid.Row="1" Background="#0D1B2A" CornerRadius="8" Padding="10" Margin="0,0,0,8" BorderBrush="#2A2A4A" BorderThickness="1">
                         <Grid>
@@ -323,11 +352,11 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" HorizontalAlignment="Center">
                                 <TextBlock Text="{Binding HttpsServerCount}" FontSize="18" FontWeight="Bold" Foreground="#66BB6A" HorizontalAlignment="Center"/>
-                                <TextBlock Text="Клиентов" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Clients" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
                             </StackPanel>
                             <StackPanel Grid.Column="1" HorizontalAlignment="Center">
                                 <TextBlock Text="{Binding HttpsEstablishedCount}" FontSize="18" FontWeight="Bold" Foreground="#4CAF50" HorizontalAlignment="Center"/>
-                                <TextBlock Text="Установлено" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Established" FontSize="10" Foreground="#78909C" HorizontalAlignment="Center"/>
                             </StackPanel>
                             <StackPanel Grid.Column="2" HorizontalAlignment="Center">
                                 <TextBlock Text="{Binding HttpsSynFloodCount}" FontSize="18" FontWeight="Bold" Foreground="#F44336" HorizontalAlignment="Center"/>
@@ -355,12 +384,12 @@
                                                 <StackPanel Orientation="Horizontal">
                                                     <TextBlock Text="{Binding DstIp}" FontWeight="SemiBold" FontSize="12" Foreground="White"/>
                                                     <TextBlock Text="→ :443" FontSize="11" Foreground="#78909C" Margin="4,0,0,0"
-                                                               ToolTip="Внешний клиент подключается к нашему сервису на порт 443"/>
+                                                               ToolTip="External client connecting to our service on port 443"/>
                                                 </StackPanel>
                                                 <TextBlock Text="{Binding ConnectionsLabel}" FontSize="10" Foreground="#B0BEC5" Margin="0,2,0,0"/>
                                                 <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
                                                     <TextBlock Text="{Binding TotalPackets, StringFormat='📦 {0}'}" FontSize="10" Foreground="#546E7A" Margin="0,0,12,0"/>
-                                                    <TextBlock Text="{Binding TotalBytes, StringFormat='📊 {0:N0} байт'}" FontSize="10" Foreground="#546E7A"/>
+                                                    <TextBlock Text="{Binding TotalBytes, StringFormat='📊 {0:N0} bytes'}" FontSize="10" Foreground="#546E7A"/>
                                                 </StackPanel>
                                             </StackPanel>
                                             <TextBlock Grid.Column="2" Text="{Binding TimeRange}" FontSize="9" Foreground="#546E7A" VerticalAlignment="Top"/>

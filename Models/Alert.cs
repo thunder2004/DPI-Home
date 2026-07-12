@@ -1,7 +1,7 @@
 namespace DPI_Home.Models;
 
 /// <summary>
-/// Уровень угрозы
+/// Threat level
 /// </summary>
 public enum ThreatLevel
 {
@@ -13,7 +13,7 @@ public enum ThreatLevel
 }
 
 /// <summary>
-/// Алерт — результат анализа пакета
+/// Alert — result of packet analysis
 /// </summary>
 public class Alert
 {
@@ -33,9 +33,9 @@ public class Alert
     public HashSet<int> ScannedPorts { get; set; } = new();
 
     /// <summary>
-    /// true, если SrcIp ненадёжен (вероятный спуфинг — например, SYN Flood с большим
-    /// числом уникальных источников). Такие IP нельзя автоблокировать: адрес может
-    /// принадлежать случайному постороннему человеку, а не атакующему.
+    /// true if SrcIp is unreliable (likely spoofed — e.g. SYN Flood with many
+    /// unique sources). Such IPs must not be auto-blocked: the address may
+    /// belong to an innocent bystander, not the attacker.
     /// </summary>
     public bool Spoofed { get; set; }
 

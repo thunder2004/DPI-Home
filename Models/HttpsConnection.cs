@@ -1,18 +1,18 @@
 namespace DPI_Home.Models;
 
 /// <summary>
-/// Состояние HTTPS/TCP-соединения
+/// HTTPS/TCP connection state
 /// </summary>
 public enum ConnectionState
 {
-    SynSent,      // SYN отправлен
-    Established,  // SYN-ACK получен (рукопожатие завершено)
+    SynSent,      // SYN sent
+    Established,  // SYN-ACK received (handshake complete)
     Closed,       // FIN/RST
-    HalfOpen      // SYN без ответа (подозрительно)
+    HalfOpen      // SYN without response (suspicious)
 }
 
 /// <summary>
-/// Модель HTTPS-соединения для отображения в отдельном окне
+/// HTTPS connection model for display
 /// </summary>
 public class HttpsConnection
 {
@@ -22,18 +22,18 @@ public class HttpsConnection
     public int SrcPort { get; set; }
     public int DstPort { get; set; }
 
-    /// <summary>IP HTTPS-сервера (независимо от того, какой из пакетов пришёл первым). Сохраняется,
-    /// чтобы при очистке можно было точно откатиться к нужной группе без перевычисления.</summary>
+    /// <summary>HTTPS server IP (regardless of which packet arrived first). Stored
+    /// so cleanup can accurately roll back the right group without recomputation.</summary>
     public string ServerIp { get; set; } = string.Empty;
 
-    /// <summary>IP внешнего клиента, подключающегося к нам (панель группируется по нему —
-    /// т.к. после фильтра "только входящие" ServerIp всегда равен нашему собственному WAN-IP).</summary>
+    /// <summary>External client IP connecting to us (panel groups by this —
+    /// since after "inbound only" filter ServerIp always equals our own WAN-IP).</summary>
     public string ClientIp { get; set; } = string.Empty;
 
     public ConnectionState State { get; set; } = ConnectionState.SynSent;
     public long PacketCount { get; set; }
     public long BytesTransferred { get; set; }
-    public string Country { get; set; } = string.Empty; // можно будет добавить GeoIP
+    public string Country { get; set; } = string.Empty; // could add GeoIP later
 
     public string StateIcon => State switch
     {
@@ -56,8 +56,8 @@ public class HttpsConnection
     public string StateLabel => State switch
     {
         ConnectionState.SynSent => "SYN",
-        ConnectionState.Established => "Установлено",
-        ConnectionState.Closed => "Закрыто",
+        ConnectionState.Established => "Established",
+        ConnectionState.Closed => "Closed",
         ConnectionState.HalfOpen => "Half-open",
         _ => "?"
     };

@@ -5,9 +5,9 @@ using DPI_Home.Models;
 namespace DPI_Home.Services;
 
 /// <summary>
-/// Описывает топологию: какие подсети «наши» и какие IP — наши WAN-адреса.
-/// На основе этого пакетам присваивается направление (Inbound/Outbound/Internal).
-/// Заменяет хрупкую эвристику IsPrivateIp: теперь фильтрация осознанная и настраиваемая.
+/// Describes topology: which subnets are "ours" and which IPs are our WAN addresses.
+/// Based on this, packets are assigned a direction (Inbound/Outbound/Internal).
+/// Replaces fragile IsPrivateIp heuristic: classification is now explicit and configurable.
 /// </summary>
 public class NetworkContext
 {
@@ -15,20 +15,20 @@ public class NetworkContext
     private readonly HashSet<uint> _wanIps = new();
 
     /// <summary>
-    /// Точка съёма трафика. Влияет на то, какие направления имеет смысл анализировать.
+    /// Traffic capture vantage point. Affects which directions are meaningful to analyze.
     /// </summary>
     public CaptureVantage Vantage { get; set; } = CaptureVantage.Wan;
 
     public enum CaptureVantage
     {
-        Wan,  // сниффер видит WAN-интерфейс: интересен Inbound
-        Lan,  // сниффер видит LAN: интересен Internal + Outbound (заражённые хосты)
+        Wan,  // sniffer sees WAN interface: Inbound is interesting
+        Lan,  // sniffer sees LAN: Internal + Outbound interesting (infected hosts)
         Both
     }
 
     /// <summary>
-    /// Создаёт контекст с дефолтами RFC1918. WAN-IP нужно добавить явно через AddWanIp,
-    /// иначе исходящий трафик с публичного WAN-адреса будет считаться Inbound.
+    /// Creates a context with RFC1918 defaults. WAN-IP must be added explicitly via AddWanIp,
+    /// otherwise outgoing traffic from the public WAN address will be classified as Inbound.
     /// </summary>
     public static NetworkContext CreateDefault()
     {
@@ -60,6 +60,38 @@ public class NetworkContext
     public bool IsLocal(string ip) =>
         TryIpToUint(ip, out uint v) && IsLocal(v);
 
+    /// <summary>
+    /// Well-known public services that must never be auto-blocked
+    /// (DNS resolvers, CDN, NTP, major clouds). Alerts for them are still
+    /// shown — only automatic blocking is suppressed.
+    /// </summary>
+    public bool IsWellKnown(string ip) =>
+        TryIpToUint(ip, out uint v) && IsWellKnown(v);
+
+    private static readonly HashSet<uint> WellKnownIps = new()
+    {
+        // Google Public DNS
+        IpToUint("8.8.8.8"), IpToUint("8.8.4.4"),
+        // Cloudflare DNS
+        IpToUint("1.1.1.1"), IpToUint("1.0.0.1"),
+        // Quad9
+        IpToUint("9.9.9.9"), IpToUint("149.112.112.112"),
+        // OpenDNS
+        IpToUint("208.67.222.222"), IpToUint("208.67.220.220"),
+        // Cloudflare CDN (often triggers ICMP Tunneling)
+        IpToUint("1.1.1.2"), IpToUint("1.0.0.2"),
+        // NTP pool (often triggers on large packets)
+        IpToUint("129.6.15.28"), IpToUint("129.6.15.29"),  // time.nist.gov
+    };
+
+    private static uint IpToUint(string ip)
+    {
+        TryIpToUint(ip, out uint v);
+        return v;
+    }
+
+    private bool IsWellKnown(uint ip) => WellKnownIps.Contains(ip);
+
     private bool IsLocal(uint ip)
     {
         foreach (var (net, mask) in _localSubnets)
@@ -70,7 +102,7 @@ public class NetworkContext
     private bool IsOurs(uint ip) => _wanIps.Contains(ip) || IsLocal(ip);
 
     /// <summary>
-    /// Классифицирует пакет по направлению. Только IPv4 (v6 отсекается парсером).
+    /// Classifies a packet by direction. IPv4 only (v6 is filtered by the parser).
     /// </summary>
     public TrafficDirection Classify(string srcIp, string dstIp)
     {
@@ -84,14 +116,14 @@ public class NetworkContext
         if (srcOurs && dstOurs) return TrafficDirection.Internal;
         if (!srcOurs && dstOurs) return TrafficDirection.Inbound;
         if (srcOurs && !dstOurs) return TrafficDirection.Outbound;
-        return TrafficDirection.Unknown; // ни src, ни dst не наши — транзит/мусор
+        return TrafficDirection.Unknown; // neither src nor dst are ours — transit/garbage
     }
 
     private static bool TryIpToUint(string ip, out uint value)
     {
         value = 0;
         if (!IPAddress.TryParse(ip, out var addr)) return false;
-        if (addr.AddressFamily != AddressFamily.InterNetwork) return false; // только IPv4
+        if (addr.AddressFamily != AddressFamily.InterNetwork) return false; // IPv4 only
         var b = addr.GetAddressBytes();
         value = ((uint)b[0] << 24) | ((uint)b[1] << 16) | ((uint)b[2] << 8) | b[3];
         return true;
