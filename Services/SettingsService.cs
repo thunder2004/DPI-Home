@@ -4,12 +4,12 @@ using System.Text.Json;
 namespace DPI_Home.Services;
 
 /// <summary>
-/// Настройки приложения, сохраняемые между запусками.
+/// Application settings persisted between launches.
 ///
-/// ВАЖНО: MikrotikPassword хранится в открытом виде (plain text) в JSON-файле
-/// в профиле пользователя. Это осознанный компромисс для домашнего инструмента —
-/// не используйте сюда пароль, который важен где-то ещё, и учитывайте, что
-/// любой процесс с доступом к вашему профилю Windows сможет его прочитать.
+/// IMPORTANT: MikrotikPassword is stored in plain text in a JSON file
+/// in the user profile. This is a deliberate trade-off for a home tool —
+/// don't use a password that matters elsewhere, and be aware that any
+/// process with access to your Windows profile can read it.
 /// </summary>
 public class AppSettings
 {
@@ -19,6 +19,8 @@ public class AppSettings
     public string WanIp { get; set; } = "";
     public bool AutoBlockEnabled { get; set; }
     public int ListenPort { get; set; } = 37008;
+    public int RdpThreshold { get; set; } = 3;
+    public int RdpWindowSeconds { get; set; } = 300;
 }
 
 public static class SettingsService
@@ -42,13 +44,13 @@ public static class SettingsService
         }
         catch
         {
-            // Повреждённый/недоступный файл настроек не должен ронять приложение —
-            // просто стартуем с дефолтами, как будто настроек ещё не было.
+            // Corrupt/inaccessible settings file must not crash the app —
+            // just start with defaults as if no settings existed yet.
         }
         return new AppSettings();
     }
 
-    /// <summary>Сохранение — best-effort, ошибки диска не должны мешать работе приложения.</summary>
+    /// <summary>Save — best-effort, disk errors must not interfere with app operation.</summary>
     public static void Save(AppSettings settings)
     {
         try

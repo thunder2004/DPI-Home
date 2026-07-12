@@ -1,18 +1,18 @@
 namespace DPI_Home.Models;
 
 /// <summary>
-/// Направление пакета относительно защищаемой сети.
+/// Packet direction relative to the protected network.
 /// </summary>
 public enum TrafficDirection
 {
     Unknown,
-    Inbound,   // из внешней сети к нам (src внешний, dst наш)
-    Outbound,  // от нас во внешнюю сеть
-    Internal   // внутри наших подсетей (потенциальное латеральное движение)
+    Inbound,   // from outside to us (src external, dst ours)
+    Outbound,  // from us to outside
+    Internal   // within our subnets (potential lateral movement)
 }
 
 /// <summary>
-/// Сырой пакет, полученный от MikroTik Packet Sniffer (TZSP/Ethernet).
+/// Raw packet received from MikroTik Packet Sniffer (TZSP/Ethernet).
 /// </summary>
 public class RawPacket
 {
@@ -25,41 +25,41 @@ public class RawPacket
     public int DstPort { get; set; }
     public string Protocol { get; set; } = string.Empty; // TCP, UDP, ICMP, etc.
 
-    /// <summary>Длина всей захваченной датаграммы (TZSP+Eth+IP+...). НЕ длина L4-payload.</summary>
+    /// <summary>Length of the entire captured datagram (TZSP+Eth+IP+...). NOT the L4-payload length.</summary>
     public int PacketLength { get; set; }
 
-    /// <summary>Длина IP-пакета из поля Total Length IP-заголовка (без Eth/TZSP оверхеда).</summary>
+    /// <summary>IP packet length from the Total Length field in the IP header (without Eth/TZSP overhead).</summary>
     public int IpTotalLength { get; set; }
 
     public string PayloadHex { get; set; } = string.Empty;
 
-    /// <summary>Вся захваченная датаграмма целиком.</summary>
+    /// <summary>The entire captured datagram.</summary>
     public byte[] PayloadRaw { get; set; } = Array.Empty<byte>();
 
-    /// <summary>Смещение начала L4-payload (после TCP/UDP заголовка) внутри PayloadRaw. -1 если недоступно.</summary>
+    /// <summary>Offset of the L4-payload start (after TCP/UDP header) within PayloadRaw. -1 if unavailable.</summary>
     public int L4PayloadOffset { get; set; } = -1;
 
-    /// <summary>Длина L4-payload в байтах (0 если недоступно / нет данных).</summary>
+    /// <summary>L4-payload length in bytes (0 if unavailable / no data).</summary>
     public int L4PayloadLength { get; set; }
 
     public string InterfaceName { get; set; } = string.Empty;
     public byte TcpFlags { get; set; }  // FIN=1, SYN=2, RST=4, PSH=8, ACK=16, URG=32
-    public bool TcpFlagsParsed { get; set; }  // true = флаги реально считаны (пакет не truncated/не фрагмент)
+    public bool TcpFlagsParsed { get; set; }  // true = flags actually parsed (packet not truncated/fragmented)
 
-    /// <summary>true, если это НЕ первый фрагмент (L4-заголовка нет).</summary>
+    /// <summary>true if this is NOT the first fragment (no L4 header).</summary>
     public bool IsNonFirstFragment { get; set; }
 
-    /// <summary>Первый (или единственный) фрагмент — только у него есть валидный L4-заголовок.</summary>
+    /// <summary>First (or only) fragment — only this one has a valid L4 header.</summary>
     public bool IsFirstFragment => !IsNonFirstFragment;
 
     public bool IsTcp => Protocol == "TCP";
     public bool IsUdp => Protocol == "UDP";
     public bool IsIcmp => Protocol == "ICMP";
 
-    /// <summary>Направление относительно наших подсетей (заполняется NetworkContext).</summary>
+    /// <summary>Direction relative to our subnets (populated by NetworkContext).</summary>
     public TrafficDirection Direction { get; set; } = TrafficDirection.Unknown;
 
-    /// <summary>Удобный доступ к срезу L4-payload (может быть пустым).</summary>
+    /// <summary>Convenient access to the L4-payload slice (may be empty).</summary>
     public ReadOnlySpan<byte> L4Payload =>
         L4PayloadOffset >= 0 && L4PayloadOffset + L4PayloadLength <= PayloadRaw.Length
             ? PayloadRaw.AsSpan(L4PayloadOffset, L4PayloadLength)

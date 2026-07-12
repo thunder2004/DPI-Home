@@ -1,8 +1,8 @@
 namespace DPI_Home.Services;
 
 /// <summary>
-/// Базовое состояние скользящего окна. LastActivityUtc нужен уборщику:
-/// раньше словари состояний росли бесконечно и никогда не чистились.
+/// Base sliding-window state. LastActivityUtc is needed by the eviction logic:
+/// previously state dictionaries grew indefinitely and were never cleaned.
 /// </summary>
 public abstract class WindowState
 {
@@ -11,7 +11,7 @@ public abstract class WindowState
     public DateTime LastAlertUtc { get; set; } = DateTime.MinValue;
 }
 
-/// <summary>Порт-скан: уникальные целевые порты от одного источника к одной жертве.</summary>
+/// <summary>Port scan: unique target ports from one source to one victim.</summary>
 public sealed class PortScanState : WindowState
 {
     private readonly List<(int Port, DateTime Time)> _probes = new();
@@ -22,7 +22,7 @@ public sealed class PortScanState : WindowState
         _probes.Add((port, utc));
         TotalProbes++;
         LastActivityUtc = DateTime.UtcNow;
-        if (_probes.Count > 20_000) _probes.RemoveRange(0, 10_000);   // защита от разрастания
+        if (_probes.Count > 20_000) _probes.RemoveRange(0, 10_000);   // guard against unbounded growth
     }
 
     public void Purge(int windowSeconds)
@@ -46,7 +46,7 @@ public sealed class PortScanState : WindowState
     public void Reset() => _probes.Clear();
 }
 
-/// <summary>Brute-force: попытки новых соединений (SYN) на один сервисный порт.</summary>
+/// <summary>Brute-force: new connection attempts (SYN) to a single service port.</summary>
 public sealed class BruteForceState : WindowState
 {
     private readonly List<DateTime> _attempts = new();
@@ -76,16 +76,16 @@ public sealed class BruteForceState : WindowState
 }
 
 /// <summary>
-/// SYN flood: ключ — ЖЕРТВА (DstIp:DstPort), а не источник.
-/// Реальный флуд идёт со спуфнутых адресов, поэтому счётчик по SrcIp никогда не срабатывал,
-/// зато плодил по записи словаря на каждый поддельный IP.
+/// SYN flood: key is the VICTIM (DstIp:DstPort), not the source.
+/// Real floods come from spoofed addresses, so a per-SrcIp counter never triggered,
+/// and instead created a dictionary entry for every spoofed IP.
 /// </summary>
 public sealed class SynFloodState : WindowState
 {
     private readonly List<(DateTime Time, string Src)> _syns = new();
     public long TotalSyns { get; private set; }
 
-    private const int HardCap = 50_000;   // для алерта хватит с запасом
+    private const int HardCap = 50_000;   // more than enough for an alert
 
     public void AddSyn(string srcIp, DateTime utc)
     {
@@ -106,7 +106,7 @@ public sealed class SynFloodState : WindowState
         return _syns.Count(s => s.Time > cutoff);
     }
 
-    /// <summary>Число уникальных источников — отличает распределённый/спуфнутый флуд от одиночного скана.</summary>
+    /// <summary>Unique source count — distinguishes distributed/spoofed flood from a single scan.</summary>
     public int UniqueSources(int windowSeconds)
     {
         var cutoff = DateTime.UtcNow.AddSeconds(-windowSeconds);
@@ -126,7 +126,36 @@ public sealed class SynFloodState : WindowState
     public void Reset() => _syns.Clear();
 }
 
-/// <summary>ICMP: частота эхо-пакетов от источника (ping flood / туннель).</summary>
+/// <summary>RDP brute-force: new TCP connections (SYN) to port 3389 from one source.</summary>
+public sealed class RdpAuthState : WindowState
+{
+    private readonly List<DateTime> _attempts = new();
+    public long TotalAttempts { get; private set; }
+
+    public void AddAttempt(DateTime utc)
+    {
+        _attempts.Add(utc);
+        TotalAttempts++;
+        LastActivityUtc = DateTime.UtcNow;
+        if (_attempts.Count > 5_000) _attempts.RemoveRange(0, 2_000);
+    }
+
+    public void Purge(int windowSeconds)
+    {
+        var cutoff = DateTime.UtcNow.AddSeconds(-windowSeconds);
+        _attempts.RemoveAll(t => t < cutoff);
+    }
+
+    public int InWindow(int windowSeconds)
+    {
+        var cutoff = DateTime.UtcNow.AddSeconds(-windowSeconds);
+        return _attempts.Count(t => t > cutoff);
+    }
+
+    public void Reset() => _attempts.Clear();
+}
+
+/// <summary>ICMP: echo packet rate from a source (ping flood / tunnel).</summary>
 public sealed class IcmpRateState : WindowState
 {
     private readonly List<DateTime> _hits = new();

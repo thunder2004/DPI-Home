@@ -1,7 +1,7 @@
 namespace DPI_Home.Models;
 
 /// <summary>
-/// Статистика трафика в реальном времени
+/// Real-time traffic statistics
 /// </summary>
 public class TrafficStats
 {

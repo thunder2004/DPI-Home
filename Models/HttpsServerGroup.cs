@@ -1,7 +1,7 @@
 namespace DPI_Home.Models;
 
 /// <summary>
-/// Агрегированная группа HTTPS-соединений к одному серверу
+/// Aggregated group of HTTPS connections to one server
 /// </summary>
 public class HttpsServerGroup
 {

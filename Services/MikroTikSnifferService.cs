@@ -6,9 +6,9 @@ using DPI_Home.Models;
 namespace DPI_Home.Services;
 
 /// <summary>
-/// Сервис захвата трафика с MikroTik через Packet Sniffer (TZSP over UDP).
-/// MikroTik шлёт UDP-датаграммы с TZSP-заголовком переменной длины,
-/// внутри которого инкапсулирован Ethernet-кадр.
+/// Traffic capture service from MikroTik via Packet Sniffer (TZSP over UDP).
+/// MikroTik sends UDP datagrams with a variable-length TZSP header,
+/// inside which an Ethernet frame is encapsulated.
 /// </summary>
 public class MikroTikSnifferService : IDisposable
 {
@@ -18,7 +18,7 @@ public class MikroTikSnifferService : IDisposable
     private Task? _readTask;
     private bool _firstPacketDumped;
 
-    // TZSP константы
+    // TZSP constants
     private const byte TzspVersion = 0x01;
     private const int TzspEncapEthernet = 0x0001;
     private const byte TzspTagEnd = 0x01;
@@ -52,7 +52,7 @@ public class MikroTikSnifferService : IDisposable
         try
         {
             _udpClient = new UdpClient(_listenPort);
-            OnError?.Invoke($"✅ UDP сервер запущен на порту {_listenPort}, ожидаю пакеты от MikroTik...");
+            OnError?.Invoke($"✅ UDP server started on port {_listenPort}, waiting for packets from MikroTik...");
             IsConnected = false;
             OnConnectionChanged?.Invoke(false);
 
@@ -105,15 +105,15 @@ public class MikroTikSnifferService : IDisposable
         {
             File.WriteAllText(
                 Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "packet_dump.txt"),
-                $"Первый пакет ({data.Length} байт):\n{hex}");
+                $"First packet ({data.Length} bytes):\n{hex}");
         }
         catch { }
-        OnError?.Invoke($"🔗 Первый пакет ({data.Length} байт) — дамп сохранён в packet_dump.txt");
+        OnError?.Invoke($"🔗 First packet ({data.Length} bytes) — dump saved to packet_dump.txt");
     }
 
     /// <summary>
-    /// Разбирает TZSP-заголовок переменной длины. Возвращает смещение начала
-    /// инкапсулированного Ethernet-кадра, либо -1 если это не Ethernet-over-TZSP.
+    /// Parses the variable-length TZSP header. Returns the offset of the
+    /// encapsulated Ethernet frame, or -1 if this is not Ethernet-over-TZSP.
     /// </summary>
     private static int ParseTzspHeader(byte[] d, int len)
     {
@@ -126,13 +126,13 @@ public class MikroTikSnifferService : IDisposable
         while (i < len)
         {
             byte tag = d[i];
-            if (tag == TzspTagEnd) return i + 1;      // конец тегов → дальше Ethernet
+            if (tag == TzspTagEnd) return i + 1;      // end of tags → Ethernet follows
             if (tag == TzspTagPadding) { i++; continue; }
             if (i + 1 >= len) return -1;
             int tagLen = d[i + 1];
             i += 2 + tagLen;                          // tag(1) + len(1) + data(tagLen)
         }
-        return -1; // TAG_END не найден
+        return -1; // TAG_END not found
     }
 
     private static RawPacket? ParsePacket(byte[] data, int length)
@@ -142,14 +142,14 @@ public class MikroTikSnifferService : IDisposable
             int ethOff = ParseTzspHeader(data, length);
             if (ethOff < 0) return null;
 
-            // Ethernet-заголовок: 14 байт минимум
+            // Ethernet header: 14 bytes minimum
             if (ethOff + 14 > length) return null;
 
             var packet = new RawPacket
             {
                 Timestamp = DateTime.UtcNow,
                 PacketLength = length,
-                PayloadRaw = data,          // держим весь буфер; срезы через L4Payload
+                PayloadRaw = data,          // keep entire buffer; slices via L4Payload
                 PayloadHex = Convert.ToHexString(data, 0, Math.Min(length, 64))
             };
 
@@ -159,7 +159,7 @@ public class MikroTikSnifferService : IDisposable
             int etherType = (data[ethOff + 12] << 8) | data[ethOff + 13];
             int ipOffset = ethOff + 14;
 
-            // 802.1Q / QinQ VLAN — по 4 байта на тег
+            // 802.1Q / QinQ VLAN — 4 bytes per tag
             while (etherType == EthTypeVlan || etherType == EthTypeQinQ)
             {
                 if (ipOffset + 4 > length) return null;
@@ -169,22 +169,22 @@ public class MikroTikSnifferService : IDisposable
 
             if (etherType == EthTypeIpv6)
             {
-                // IPv6 пока не поддержан детекторами — помечаем и не парсим L4.
+                // IPv6 not yet supported by detectors — mark and skip L4 parsing.
                 packet.Protocol = "IPv6";
                 return packet;
             }
-            if (etherType != EthTypeIpv4) return null; // ARP, PPPoE и пр. — не наш случай
+            if (etherType != EthTypeIpv4) return null; // ARP, PPPoE etc. — not our case
 
-            if (ipOffset + 20 > length) return packet; // недостаточно на IP-заголовок
+            if (ipOffset + 20 > length) return packet; // not enough for IP header
 
             int versionIhl = data[ipOffset];
-            if ((versionIhl >> 4) != 4) return null;   // не IPv4
+            if ((versionIhl >> 4) != 4) return null;   // not IPv4
             int ihl = (versionIhl & 0x0F) * 4;
-            if (ihl < 20 || ipOffset + ihl > length) return packet; // битый IHL
+            if (ihl < 20 || ipOffset + ihl > length) return packet; // bad IHL
 
             packet.IpTotalLength = (data[ipOffset + 2] << 8) | data[ipOffset + 3];
 
-            // Флаги фрагментации / offset
+            // Fragmentation flags / offset
             int flagsFrag = (data[ipOffset + 6] << 8) | data[ipOffset + 7];
             int fragOffset = flagsFrag & 0x1FFF;
             packet.IsNonFirstFragment = fragOffset != 0;
@@ -201,7 +201,7 @@ public class MikroTikSnifferService : IDisposable
                 _ => $"IP-{protocol}"
             };
 
-            // Для не-первых фрагментов L4-заголовка нет — порты/флаги НЕ читаем.
+            // Non-first fragments have no L4 header — don't read ports/flags.
             if (packet.IsNonFirstFragment)
                 return packet;
 
@@ -216,7 +216,7 @@ public class MikroTikSnifferService : IDisposable
 
             if (protocol == 6) // TCP
             {
-                if (transportOffset + 20 > length) return packet; // минимум TCP-заголовка
+                if (transportOffset + 20 > length) return packet; // minimum TCP header
                 packet.TcpFlags = data[transportOffset + 13];
                 packet.TcpFlagsParsed = true;
 
@@ -232,7 +232,7 @@ public class MikroTikSnifferService : IDisposable
             }
             else if (protocol == 1) // ICMP
             {
-                packet.L4PayloadOffset = transportOffset; // ICMP-заголовок + данные
+                packet.L4PayloadOffset = transportOffset; // ICMP header + data
             }
 
             if (packet.L4PayloadOffset >= 0 && packet.L4PayloadOffset <= length)

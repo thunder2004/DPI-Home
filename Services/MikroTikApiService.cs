@@ -10,11 +10,11 @@ using DPI_Home.Models;
 namespace DPI_Home.Services;
 
 /// <summary>
-/// Пишет подробный лог каждого HTTP-обмена с MikroTik: метод, URL, тело запроса,
-/// статус и тело ответа, полный текст исключений (ex.ToString(), а не только Message —
-/// там часто теряется реальная причина вроде TLS-ошибки или отказа в соединении).
-/// Нужен, потому что у нас нет прямого доступа к роутеру пользователя для отладки —
-/// этот файл единственный источник истины о том, что реально ушло и что вернулось.
+/// Logs every HTTP exchange with MikroTik in detail: method, URL, request body,
+/// status and response body, full exception text (ex.ToString(), not just Message —
+/// the real cause like a TLS error or connection refusal is often lost otherwise).
+/// Needed because we don't have direct access to the user's router for debugging —
+/// this file is the single source of truth for what was actually sent and returned.
 /// </summary>
 public static class MikroTikDebugLog
 {
@@ -35,7 +35,7 @@ public static class MikroTikDebugLog
                 var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}{Environment.NewLine}";
                 File.AppendAllText(LogPath, line);
 
-                // Простая ротация — не даём файлу расти бесконечно.
+                // Simple rotation — prevent unbounded file growth.
                 var info = new FileInfo(LogPath);
                 if (info.Exists && info.Length > 2_000_000)
                 {
@@ -46,13 +46,13 @@ public static class MikroTikDebugLog
         }
         catch
         {
-            // Логирование не должно ронять приложение.
+            // Logging must never crash the app.
         }
     }
 }
 
 /// <summary>
-/// Сервис для управления MikroTik через REST API (RouterOS 7+)
+/// Service for managing MikroTik via REST API (RouterOS 7+)
 /// </summary>
 public class MikroTikApiService
 {
@@ -72,16 +72,15 @@ public class MikroTikApiService
         _username = username;
         _password = password;
 
-        // ВАЖНО: раньше здесь стоял ServicePointManager.ServerCertificateValidationCallback —
-        // это устаревший API, который в современном .NET (Core/5+) НЕ действует на HttpClient
-        // (там под капотом SocketsHttpHandler, а не старый ServicePoint-стек). Обход
-        // самоподписанного сертификата MikroTik делаем через HttpClientHandler — это
-        // единственный способ, реально работающий для HttpClient в текущем .NET.
+        // IMPORTANT: previously used ServicePointManager.ServerCertificateValidationCallback —
+        // this is a legacy API that does NOT work with HttpClient in modern .NET (Core/5+)
+        // (SocketsHttpHandler is under the hood, not the old ServicePoint stack). Bypassing
+        // MikroTik's self-signed certificate is done via HttpClientHandler — the only method
+        // that actually works for HttpClient in current .NET.
         //
-        // Также явно фиксируем TLS 1.2: у RouterOS TLS-стек часто поддерживает только его,
-        // а .NET по умолчанию пытается договориться на TLS 1.3/системных наборах шифров и
-        // иногда промахивается — отсюда наблюдавшиеся ИНОГДА успешные, ИНОГДА падающие
-        // с "HandshakeFailure" попытки подключения.
+        // Also explicitly pin TLS 1.2: RouterOS TLS stack often only supports it,
+        // and .NET defaults to negotiating TLS 1.3/system cipher suites which sometimes
+        // fail — hence the intermittent "HandshakeFailure" connection attempts.
         var handler = new HttpClientHandler
         {
             ServerCertificateCustomValidationCallback = (_, _, _, _) => true,
@@ -97,30 +96,34 @@ public class MikroTikApiService
         var auth = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{username}:{password}"));
         _http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", auth);
 
-        MikroTikDebugLog.Log($"=== Новая сессия MikroTikApiService, BaseAddress={_http.BaseAddress}, user={username}, TLS=1.2 (принудительно) ===");
+        MikroTikDebugLog.Log($"=== New MikroTikApiService session, BaseAddress={_http.BaseAddress}, user={username}, TLS=1.2 (forced) ===");
     }
 
     /// <summary>
-    /// Создаёт адрес-лист с правилом DROP для указанного IP на 24 часа
+    /// Creates an address-list entry with a DROP rule for the specified IP for 24 hours
     /// </summary>
     public async Task<string?> BlockIpAsync(string ip, string comment = "DPI-Home auto-block")
     {
         try
         {
-            // 1. Проверяем, есть ли уже такой IP в списке
+            // 1. Check if this IP is already in the list
             var checkUrl = $"ip/firewall/address-list?address={ip}";
             MikroTikDebugLog.Log($"GET {checkUrl}");
             var checkJson = await _http.GetStringAsync(checkUrl);
             MikroTikDebugLog.Log($"  -> {checkJson}");
 
             var existing = JsonSerializer.Deserialize<List<MikroTikAddressList>>(checkJson, JsonOpts);
-            if (existing != null && existing.Count > 0)
+            // ponytail: filter by list name — IP may be in Home_net or other lists,
+            // which doesn't mean it's already in DPI-Home-Blocked. Without this check,
+            // blocking was silently skipped for any IP already in any address-list.
+            var alreadyBlocked = existing?.FirstOrDefault(e => e.List == "DPI-Home-Blocked");
+            if (alreadyBlocked != null)
             {
-                MikroTikDebugLog.Log($"  IP {ip} уже есть в address-list (id={existing[0].Id})");
-                return $"IP {ip} уже есть в address-list (id={existing[0].Id})";
+                MikroTikDebugLog.Log($"  IP {ip} already in DPI-Home-Blocked (id={alreadyBlocked.Id})");
+                return $"IP {ip} already in DPI-Home-Blocked (id={alreadyBlocked.Id})";
             }
 
-            // 2. Создаём запись в address-list с timeout=1d
+            // 2. Create address-list entry with timeout=1d
             var payload = new
             {
                 address = ip,
@@ -138,25 +141,25 @@ public class MikroTikApiService
 
             if (response.IsSuccessStatusCode)
             {
-                return null; // успешно
+                return null; // success
             }
 
-            return $"Ошибка API: {response.StatusCode} — {responseBody}";
+            return $"API error: {response.StatusCode} — {responseBody}";
         }
         catch (Exception ex)
         {
-            MikroTikDebugLog.Log($"  EXCEPTION в BlockIpAsync: {ex}");
-            return $"Ошибка: {ex.Message}";
+            MikroTikDebugLog.Log($"  EXCEPTION in BlockIpAsync: {ex}");
+            return $"Error: {ex.Message}";
         }
     }
 
     /// <summary>
-    /// Определяет публичный (WAN) IP роутера через IP Cloud (RouterOS "/ip cloud").
-    /// Без этого IP NetworkContext не может классифицировать трафик, адресованный на наш
-    /// публичный адрес, как "наш" — такие пакеты получают Direction=Unknown и полностью
-    /// выпадают из детекта (в том числе SYN Flood на проброшенные из WAN сервисы).
-    /// Требует, чтобы служба IP Cloud была включена на роутере (/ip cloud set ddns-enabled=yes
-    /// или хотя бы просто включена сама служба — public-address заполняется в любом случае).
+    /// Retrieves the router's public (WAN) IP via IP Cloud (RouterOS "/ip cloud").
+    /// Without this IP, NetworkContext cannot classify traffic addressed to our
+    /// public address as "ours" — such packets get Direction=Unknown and completely
+    /// fall out of detection (including SYN Flood on port-forwarded WAN services).
+    /// Requires IP Cloud service enabled on the router (/ip cloud set ddns-enabled=yes
+    /// or at least the service itself enabled — public-address is populated regardless).
     /// </summary>
     public async Task<(string? Ip, string? Error)> GetWanIpAsync()
     {
@@ -169,17 +172,17 @@ public class MikroTikApiService
             var cloud = JsonSerializer.Deserialize<MikroTikCloudInfo>(json, JsonOpts);
             if (cloud != null && !string.IsNullOrWhiteSpace(cloud.PublicAddress))
                 return (cloud.PublicAddress, null);
-            return (null, "IP Cloud не вернул public-address (служба выключена?)");
+            return (null, "IP Cloud did not return public-address (service disabled?)");
         }
         catch (Exception ex)
         {
-            MikroTikDebugLog.Log($"  EXCEPTION в GetWanIpAsync: {ex}");
-            return (null, $"Ошибка: {ex.Message}");
+            MikroTikDebugLog.Log($"  EXCEPTION in GetWanIpAsync: {ex}");
+            return (null, $"Error: {ex.Message}");
         }
     }
 
     /// <summary>
-    /// Проверяет подключение к MikroTik
+    /// Tests connection to MikroTik
     /// </summary>
     public async Task<string?> TestConnectionAsync()
     {
@@ -192,31 +195,30 @@ public class MikroTikApiService
 
             if (response.IsSuccessStatusCode)
             {
-                return null; // успешно
+                return null; // success
             }
-            return $"Ошибка: {response.StatusCode}";
+            return $"Error: {response.StatusCode}";
         }
         catch (Exception ex)
         {
-            MikroTikDebugLog.Log($"  EXCEPTION в TestConnectionAsync: {ex}");
-            return $"Ошибка: {ex.Message}";
+            MikroTikDebugLog.Log($"  EXCEPTION in TestConnectionAsync: {ex}");
+            return $"Error: {ex.Message}";
         }
     }
 
     /// <summary>
-    /// Убеждается, что правило firewall для address-list существует.
+    /// Ensures the firewall rule for the address-list exists.
     ///
-    /// ВАЖНО: правильное поле для матчинга источника по address-list в правиле drop —
-    /// "src-address-list" (через дефис). Раньше здесь было "address-list" в GET-запросе
-    /// проверки и "address_list" (с подчёркиванием) в теле создания — оба варианта не
-    /// являются валидным match-полем для action=drop в RouterOS (просто "address-list" —
-    /// это параметр ДЕЙСТВИЯ add-src-to-address-list, а не критерий для drop).
+    /// IMPORTANT: the correct field for matching source by address-list in a drop rule is
+    /// "src-address-list" (with hyphen). Previously "address-list" was used in the GET
+    /// check and "address_list" (underscore) in the create body — neither is a valid
+    /// match field for action=drop in RouterOS ("address-list" is a parameter of the
+    /// add-src-to-address-list action, not a drop criterion).
     ///
-    /// GET-проверка теперь фильтрует только по chain/action (базовые поля, точно
-    /// поддерживаются) и фильтрует по src-address-list вручную на своей стороне —
-    /// раньше проверка через query-параметр src-address-list могла быть проигнорирована
-    /// роутером и вернуть чужие chain=forward action=drop правила, ошибочно считая,
-    /// что наше правило уже есть.
+    /// The GET check now filters only by chain/action (base fields, definitely supported)
+    /// and filters by src-address-list manually on our side — previously the query-parameter
+    /// src-address-list could be ignored by the router and return foreign chain=forward
+    /// action=drop rules, falsely concluding our rule already exists.
     /// </summary>
     public async Task<string?> EnsureFirewallRuleAsync()
     {
@@ -229,18 +231,18 @@ public class MikroTikApiService
             var existing = JsonSerializer.Deserialize<List<MikroTikFirewallRule>>(rulesJson, JsonOpts);
             if (existing != null && existing.Any(r => r.SrcAddressList == "DPI-Home-Blocked"))
             {
-                MikroTikDebugLog.Log("  Правило уже существует (найдено по src-address-list=DPI-Home-Blocked)");
-                return null; // правило уже есть
+                MikroTikDebugLog.Log("  Rule already exists (found by src-address-list=DPI-Home-Blocked)");
+                return null; // rule already exists
             }
 
-            // Создаём правило. Используем Dictionary, а не анонимный объект — C# не
-            // разрешает дефис в имени свойства, а RouterOS ждёт именно "src-address-list".
+            // Create rule. Using Dictionary, not anonymous object — C# doesn't
+            // allow hyphens in property names, and RouterOS expects "src-address-list".
             var payload = new Dictionary<string, object>
             {
                 ["chain"] = "forward",
                 ["action"] = "drop",
                 ["src-address-list"] = "DPI-Home-Blocked",
-                ["comment"] = "DPI-Home: блокировка подозрительных IP"
+                ["comment"] = "DPI-Home: block suspicious IPs"
             };
             var body = JsonSerializer.Serialize(payload);
             MikroTikDebugLog.Log($"PUT ip/firewall/filter  body={body}");
@@ -253,12 +255,12 @@ public class MikroTikApiService
             if (response.IsSuccessStatusCode)
                 return null;
 
-            return $"Ошибка создания правила: {response.StatusCode} — {responseBody}";
+            return $"Rule creation error: {response.StatusCode} — {responseBody}";
         }
         catch (Exception ex)
         {
-            MikroTikDebugLog.Log($"  EXCEPTION в EnsureFirewallRuleAsync: {ex}");
-            return $"Ошибка: {ex.Message}";
+            MikroTikDebugLog.Log($"  EXCEPTION in EnsureFirewallRuleAsync: {ex}");
+            return $"Error: {ex.Message}";
         }
     }
 }
