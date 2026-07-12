@@ -46,72 +46,87 @@
         </Grid.RowDefinitions>
 
         <!-- ===== HEADER ===== -->
-        <Border Grid.Row="0" Background="#0F3460" Padding="16,12" BorderBrush="#1A5276" BorderThickness="0,0,0,1">
+        <!-- Two explicit Grid.Row lines instead of a WrapPanel inside a Width="Auto" column:
+             an Auto-sized column gives its content "infinite" width during Measure, so a
+             WrapPanel there never wraps in the Measure pass — the Grid then reserves too
+             little height for it, and whatever content actually wraps at Arrange time gets
+             clipped by the row below. A Grid.Row always has a finite width from its parent,
+             so a WrapPanel placed there measures and wraps correctly. -->
+        <Border Grid.Row="0" Background="#0F3460" Padding="16,10" BorderBrush="#1A5276" BorderThickness="0,0,0,1">
             <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
 
-                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="🛡️" FontSize="28" Margin="0,0,12,0"/>
-                    <StackPanel>
-                        <TextBlock Text="DPI Home" FontSize="22" FontWeight="Bold" Foreground="#E8EAF6"/>
-                        <TextBlock Text="MikroTik Traffic Analyzer" FontSize="12" Foreground="#90CAF9" Margin="0,-2,0,0"/>
+                <!-- Row 0: logo + status/start-stop -->
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="🛡️" FontSize="28" Margin="0,0,12,0"/>
+                        <StackPanel>
+                            <TextBlock Text="DPI Home" FontSize="22" FontWeight="Bold" Foreground="#E8EAF6"/>
+                            <TextBlock Text="MikroTik Traffic Analyzer" FontSize="12" Foreground="#90CAF9" Margin="0,-2,0,0"/>
+                        </StackPanel>
                     </StackPanel>
-                </StackPanel>
 
-                <WrapPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <StackPanel Orientation="Horizontal" Margin="0,4,16,4" VerticalAlignment="Center">
-                        <Ellipse Width="10" Height="10" Fill="{Binding StatusColor}" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                        <TextBlock Text="{Binding ConnectionStatus}" FontSize="13" Foreground="#B0BEC5" VerticalAlignment="Center"/>
-                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,16,0" VerticalAlignment="Center">
+                            <Ellipse Width="10" Height="10" Fill="{Binding StatusColor}" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding ConnectionStatus}" FontSize="13" Foreground="#B0BEC5" VerticalAlignment="Center"/>
+                        </StackPanel>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,4,12,4" VerticalAlignment="Center"
-                                ToolTip="Agent API status — tools: dpi_status, dpi_alerts, dpi_blocks, dpi_unblock">
-                        <Ellipse Width="8" Height="8" Margin="0,0,5,0" VerticalAlignment="Center">
-                            <Ellipse.Style>
-                                <Style TargetType="Ellipse">
-                                    <Setter Property="Fill" Value="#FF9800"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,12,0" VerticalAlignment="Center"
+                                    ToolTip="Agent API status — tools: dpi_status, dpi_alerts, dpi_blocks, dpi_unblock">
+                            <Ellipse Width="8" Height="8" Margin="0,0,5,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="#FF9800"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ApiConnected}" Value="True">
+                                                <Setter Property="Fill" Value="#4CAF50"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="API" FontSize="12" Foreground="#78909C" VerticalAlignment="Center"/>
+                        </StackPanel>
+
+                        <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="0,0,12,0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="Port:" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBlock Text="{Binding ListenPort}" FontSize="13" Foreground="#64B5F6" FontWeight="Bold" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Button Command="{Binding StartCommand}" Width="140" Height="36"
+                                materialDesign:ButtonAssist.CornerRadius="8" FontWeight="SemiBold" FontSize="13">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource MaterialDesignRaisedButton}">
+                                    <Setter Property="Background" Value="#4CAF50"/>
+                                    <Setter Property="Foreground" Value="White"/>
+                                    <Setter Property="Content" Value="▶ Start"/>
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding ApiConnected}" Value="True">
-                                            <Setter Property="Fill" Value="#4CAF50"/>
+                                        <DataTrigger Binding="{Binding IsConnected}" Value="True">
+                                            <Setter Property="Background" Value="#F44336"/>
+                                            <Setter Property="Content" Value="■ Stop"/>
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
-                            </Ellipse.Style>
-                        </Ellipse>
-                        <TextBlock Text="API" FontSize="12" Foreground="#78909C" VerticalAlignment="Center"/>
+                            </Button.Style>
+                        </Button>
                     </StackPanel>
+                </Grid>
 
-                    <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="0,4,12,4">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="Port:" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                            <TextBlock Text="{Binding ListenPort}" FontSize="13" Foreground="#64B5F6" FontWeight="Bold" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Border>
-
-                    <Button Command="{Binding StartCommand}" Width="140" Height="36" Margin="0,4,0,4"
-                            materialDesign:ButtonAssist.CornerRadius="8" FontWeight="SemiBold" FontSize="13">
-                        <Button.Style>
-                            <Style TargetType="Button" BasedOn="{StaticResource MaterialDesignRaisedButton}">
-                                <Setter Property="Background" Value="#4CAF50"/>
-                                <Setter Property="Foreground" Value="White"/>
-                                <Setter Property="Content" Value="▶ Start"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsConnected}" Value="True">
-                                        <Setter Property="Background" Value="#F44336"/>
-                                        <Setter Property="Content" Value="■ Stop"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Button.Style>
-                    </Button>
-
-                    <Rectangle Width="1" Fill="#2A2A4A" Margin="12,4"/>
-
-                    <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="12,4,0,4">
+                <!-- Row 1: configuration controls — wraps to as many lines as needed, correctly -->
+                <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,10,0,0">
+                    <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="0,4,8,4">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="MikroTik:" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="0,0,6,0"/>
                             <TextBox Text="{Binding MikrotikHost}" Width="90" FontSize="12"
@@ -147,7 +162,7 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="8,4,0,4">
+                    <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="0,4,8,4">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="WAN IP:" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="0,0,6,0"
                                        ToolTip="Router public address. Without it, inbound attacks on your WAN-IP are not detected (Direction=Unknown). Auto-detected on MikroTik connect (IP Cloud) or enter manually."/>
@@ -163,7 +178,7 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="8,4,0,4">
+                    <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="0,4,8,4">
                         <StackPanel Orientation="Horizontal">
                             <CheckBox IsChecked="{Binding AutoBlockEnabled}" VerticalAlignment="Center" Margin="0,0,6,0"/>
                             <TextBlock Text="Auto-block" FontSize="12" Foreground="#B0BEC5" VerticalAlignment="Center"
@@ -171,7 +186,7 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="8,4,0,4">
+                    <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="0,4,8,4">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="RDP:" FontSize="12" Foreground="#78909C" VerticalAlignment="Center" Margin="0,0,4,0"/>
                             <TextBox Text="{Binding RdpThreshold, UpdateSourceTrigger=PropertyChanged}" Width="28" FontSize="12"
@@ -190,10 +205,10 @@
                             Content="📄 Log" Width="70" Height="28" FontSize="11"
                             Background="#37474F" Foreground="#B0BEC5"
                             materialDesign:ButtonAssist.CornerRadius="6"
-                            Margin="8,4,0,4" Cursor="Hand"
+                            Margin="0,4,8,4" Cursor="Hand"
                             ToolTip="Open detailed HTTP exchange log with MikroTik (requests, responses, errors) — for diagnostics if rules/blocks don't appear on the router"/>
 
-                    <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="8,4,0,4"
+                    <Border Background="#1A1A2E" CornerRadius="6" BorderBrush="#2A2A4A" BorderThickness="1" Padding="8,4" Margin="0,4,0,4"
                             ToolTip="Agent API key — use header X-API-Key when calling http://127.0.0.1:37409">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="🔑" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0"/>
