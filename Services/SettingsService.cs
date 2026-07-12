@@ -16,6 +16,8 @@ public class AppSettings
     public int ListenPort { get; set; } = 37008;
     public int RdpThreshold { get; set; } = 3;
     public int RdpWindowSeconds { get; set; } = 300;
+    /// <summary>API key for the Agent API (GET /api/blocks, DELETE /api/blocks/{ip}).</summary>
+    public string AgentApiKey { get; set; } = "";
 }
 
 public static class SettingsService

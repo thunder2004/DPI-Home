@@ -21,6 +21,7 @@ public class MainViewModel : INotifyPropertyChanged
     private readonly AlertAggregator _aggregator;
     private readonly DispatcherTimer _statsTimer;
     private readonly object _httpsLock = new();
+    private AgentApiService? _agentApi;
 
     private TrafficStats _stats = new();
     private bool _isConnected;
@@ -127,6 +128,8 @@ public class MainViewModel : INotifyPropertyChanged
         set { _mikrotikPassword = value; OnPropertyChanged(); }
     }
 
+    public MikroTikApiService? MikrotikApi => _mikrotikApi;
+
     public bool MikrotikConnected
     {
         get => _mikrotikConnected;
@@ -158,6 +161,8 @@ public class MainViewModel : INotifyPropertyChanged
         get => _rdpWindowMinutes;
         set { _rdpWindowMinutes = value; OnPropertyChanged(); _analyzer.RdpWindowSeconds = value * 60; SaveSettings(); }
     }
+
+    public string AgentApiKey => SettingsService.Load().AgentApiKey;
 
     public ICommand StartCommand { get; }
     public ICommand StopCommand { get; }
@@ -210,6 +215,16 @@ public class MainViewModel : INotifyPropertyChanged
         _analyzer.OnAlert += OnAlert;
         _aggregator.OnAlertGroup += OnAlertGroup;
         _analyzer.OnHttpsServerGroupUpdate += OnHttpsServerGroupUpdate;
+
+        // Load API key (generate one if missing)
+        var s = SettingsService.Load();
+        if (string.IsNullOrWhiteSpace(s.AgentApiKey))
+        {
+            s.AgentApiKey = GenerateApiKey();
+            SettingsService.Save(s);
+        }
+        _agentApi = new AgentApiService(this, s.AgentApiKey);
+        _agentApi.Start();
 
         _statsTimer = new DispatcherTimer
         {
@@ -485,7 +500,7 @@ public class MainViewModel : INotifyPropertyChanged
         });
     }
 
-    private void OnError(string error)
+    public void OnError(string error)
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
@@ -533,5 +548,15 @@ public class MainViewModel : INotifyPropertyChanged
     protected void OnPropertyChanged([CallerMemberName] string? name = null)
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+    }
+
+    private static string GenerateApiKey()
+    {
+        // ponytail: 32 bytes = 43 base64 chars, URL-safe. Good enough for an API key.
+        var bytes = new byte[32];
+        using var rng = System.Security.Cryptography.RandomNumberGenerator.Create();
+        rng.GetBytes(bytes);
+        return Convert.ToBase64String(bytes)
+            .Replace("+", "-").Replace("/", "_").TrimEnd('=');
     }
 }

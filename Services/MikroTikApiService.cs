@@ -100,6 +100,63 @@ public class MikroTikApiService
     }
 
     /// <summary>
+    /// Removes an IP from the DPI-Home-Blocked address-list on MikroTik.
+    /// </summary>
+    public async Task<string?> UnblockIpAsync(string ip)
+    {
+        try
+        {
+            var listUrl = "ip/firewall/address-list?list=DPI-Home-Blocked";
+            MikroTikDebugLog.Log($"GET {listUrl}");
+            var json = await _http.GetStringAsync(listUrl);
+            MikroTikDebugLog.Log($"  -> {json}");
+
+            var entries = JsonSerializer.Deserialize<List<MikroTikAddressList>>(json, JsonOpts);
+            var entry = entries?.FirstOrDefault(e => e.Address == ip);
+            if (entry == null)
+            {
+                MikroTikDebugLog.Log($"  IP {ip} not found in DPI-Home-Blocked");
+                return $"IP {ip} not in DPI-Home-Blocked";
+            }
+
+            MikroTikDebugLog.Log($"DELETE ip/firewall/address-list/{entry.Id}");
+            var response = await _http.DeleteAsync($"ip/firewall/address-list/{entry.Id}");
+            var body = await response.Content.ReadAsStringAsync();
+            MikroTikDebugLog.Log($"  -> {(int)response.StatusCode}: {body}");
+
+            if (response.IsSuccessStatusCode)
+                return null;
+            return $"API error: {response.StatusCode} — {body}";
+        }
+        catch (Exception ex)
+        {
+            MikroTikDebugLog.Log($"  EXCEPTION in UnblockIpAsync: {ex}");
+            return $"Error: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Fetches the raw JSON of the address-list entries for the given list name.
+    /// Used by AgentApiService to enumerate blocked IPs.
+    /// </summary>
+    public async Task<string?> FetchAddressListAsync(string listName)
+    {
+        try
+        {
+            var url = $"ip/firewall/address-list?list={Uri.EscapeDataString(listName)}";
+            MikroTikDebugLog.Log($"GET {url}");
+            var json = await _http.GetStringAsync(url);
+            MikroTikDebugLog.Log($"  -> {json}");
+            return json;
+        }
+        catch (Exception ex)
+        {
+            MikroTikDebugLog.Log($"  EXCEPTION in FetchAddressListAsync: {ex}");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Creates an address-list entry with a DROP rule for the specified IP for 24 hours
     /// </summary>
     public async Task<string?> BlockIpAsync(string ip, string comment = "DPI-Home auto-block")
@@ -271,6 +328,10 @@ public class MikroTikAddressList
     public string Address { get; set; } = "";
     public string List { get; set; } = "";
     public string Timeout { get; set; } = "";
+    public string Comment { get; set; } = "";
+
+    [JsonPropertyName("created-at")]
+    public DateTime? CreatedAt { get; set; }
 }
 
 public class MikroTikFirewallRule
