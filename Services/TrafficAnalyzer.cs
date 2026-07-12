@@ -9,7 +9,9 @@ namespace DPI_Home.Services;
 ///
 /// Исправления по сравнению с оригиналом:
 ///  - Направление трафика через NetworkContext (замена IsPrivateIp).
-///  - Port Scan: только реальные пробы (SYN/stealth/UDP), не любой пакет.
+///  - Port Scan: только реальные пробы (SYN/stealth/UDP), не любой пакет; эфемерные
+///    порты (>=49152) исключены — иначе ответный UDP-трафик (QUIC/HTTP3) от занятого
+///    CDN даёт ложный "скан" наших же случайных исходящих портов.
 ///  - Brute Force: только SYN без ACK (активная сессия больше не триггерит).
 ///  - SYN Flood: ключ по ЖЕРТВЕ, считаем уникальные источники (поддержка спуфинга).
 ///  - Все состояния чистятся периодически (eviction), словари не растут бесконечно.
@@ -17,6 +19,10 @@ namespace DPI_Home.Services;
 ///  - Единая шкала Score через ThreatSignatures.ScoreFor.
 ///  - Рейт-лимит сигнатурных алертов: один алерт на (srcIp|sig) за 5 секунд.
 ///  - Фикс ошибки Now/UtcNow в очистке HTTPS-соединений.
+///  - HTTPS server group: счётчики инкрементальные (O(1) на пакет), UI-событие
+///    троттлится 300мс/сервер — раньше полный LINQ-скан всех соединений на КАЖДЫЙ
+///    пакет 443 порта + синхронный Dispatcher.Invoke на каждый вызов вызывали
+///    многосекундные фризы UI при реальной нагрузке (HTTPS/QUIC — большая часть трафика).
 /// </summary>
 public class TrafficAnalyzer
 {
@@ -34,6 +40,13 @@ public class TrafficAnalyzer
     private readonly ConcurrentDictionary<string, DateTime> _sigRateLimit = new();
     private static readonly TimeSpan SigRateLimitWindow = TimeSpan.FromSeconds(5);
 
+    // Троттлинг UI-события по HTTPS-группе: раньше UpdateHttpsServerGroup дёргался
+    // (и синхронно блокировал UI через Dispatcher.Invoke) на КАЖДЫЙ пакет 443 порта —
+    // при реальном трафике (HTTPS/QUIC — большая часть всего трафика) это тысячи
+    // вызовов в секунду с полным O(n)-сканированием словаря соединений, отсюда фризы UI.
+    private readonly ConcurrentDictionary<string, DateTime> _httpsGroupLastEmit = new();
+    private static readonly TimeSpan HttpsGroupEmitInterval = TimeSpan.FromMilliseconds(300);
+
     private const int PortScanThreshold = 20;
     private const int BruteForceThreshold = 10;
     private const int SynFloodThreshold = 100;
@@ -42,9 +55,7 @@ public class TrafficAnalyzer
 
     // Нижняя граница эфемерного диапазона портов (RFC 6335 / большинство OC).
     // Реальный сканер, ищущий открытые сервисы у нас, никогда не пойдёт в этот
-    // диапазон — там нет сервисов, только наши исходящие соединения. Без этого исключения
-    // UDP-ответы от любого бустого сервиса (например, QUIC/HTTP3 от CDN на :443)
-    // бьют в наши разные эфемерные порты и выглядит как «сканирование 20+ портов».
+    // диапазон — там нет сервисов, только наши исходящие соединения.
     private const int EphemeralPortMin = 49152;
 
     private DateTime _lastEviction = DateTime.UtcNow;
@@ -286,6 +297,10 @@ public class TrafficAnalyzer
 
     // ── HTTPS-трекинг ───────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Счётчики группы изменяются инкрементально при каждом пакете (O(1)),
+    /// а не пересчитываются полным сканом всех соединений (было O(n) на каждый пакет).
+    /// </summary>
     private void TrackHttpsConnection(RawPacket packet)
     {
         if (!packet.IsTcp || !packet.TcpFlagsParsed) return;
@@ -311,74 +326,103 @@ public class TrafficAnalyzer
 
         if (isSyn && !isAck)
         {
-            // Используем UtcNow — согласовано с eviction-логикой (была ошибка Now vs UtcNow).
-            var conn = _httpsConnections.GetOrAdd(connKey, _ => new HttpsConnection
+            bool isNew = false;
+            var conn = _httpsConnections.GetOrAdd(connKey, _ =>
             {
-                Timestamp = DateTime.UtcNow,
-                SrcIp = packet.SrcIp,
-                DstIp = packet.DstIp,
-                SrcPort = packet.SrcPort,
-                DstPort = 443,
-                State = ConnectionState.SynSent
+                isNew = true;
+                return new HttpsConnection
+                {
+                    Timestamp = DateTime.UtcNow, // согласовано с eviction-логикой (была ошибка Now vs UtcNow)
+                    SrcIp = packet.SrcIp,
+                    DstIp = packet.DstIp,
+                    SrcPort = packet.SrcPort,
+                    DstPort = 443,
+                    ServerIp = serverIp,
+                    State = ConnectionState.SynSent
+                };
             });
             conn.PacketCount++;
             conn.BytesTransferred += packet.PacketLength;
+
+            if (isNew)
+                AdjustServerGroup(serverIp, g => { g.SynSentCount++; g.TotalConnections++; });
+            else
+                AdjustServerGroup(serverIp, _ => { }); // ретрансмит SYN — счётчики состояния не меняются
+
             OnHttpsConnectionUpdate?.Invoke(conn);
-            UpdateHttpsServerGroup(serverIp);
         }
         else if (isSyn && isAck)
         {
-            if (_httpsConnections.TryGetValue(connKey, out var conn))
+            if (_httpsConnections.TryGetValue(connKey, out var conn) && conn.State == ConnectionState.SynSent)
             {
                 conn.State = ConnectionState.Established;
                 conn.PacketCount++;
                 conn.BytesTransferred += packet.PacketLength;
+                AdjustServerGroup(serverIp, g => { g.SynSentCount--; g.EstablishedCount++; });
                 OnHttpsConnectionUpdate?.Invoke(conn);
-                UpdateHttpsServerGroup(serverIp);
             }
         }
         else if (isRst || isFin)
         {
-            if (_httpsConnections.TryGetValue(connKey, out var conn))
+            if (_httpsConnections.TryGetValue(connKey, out var conn) && conn.State != ConnectionState.Closed)
             {
+                var prevState = conn.State;
                 conn.State = ConnectionState.Closed;
-                conn.Timestamp = DateTime.UtcNow;
+                conn.Timestamp = DateTime.UtcNow; // время закрытия — для TTL при eviction
                 conn.PacketCount++;
                 conn.BytesTransferred += packet.PacketLength;
+                AdjustServerGroup(serverIp, g =>
+                {
+                    if (prevState == ConnectionState.Established) g.EstablishedCount--;
+                    else if (prevState == ConnectionState.SynSent) g.SynSentCount--;
+                    g.ClosedCount++;
+                });
                 OnHttpsConnectionUpdate?.Invoke(conn);
-                UpdateHttpsServerGroup(serverIp);
             }
         }
         else
         {
+            // Обычный дата-пакет в рамках уже известного соединения — самое частое событие
+            // при реальной нагрузке. Счётчики состояния не меняются, поэтому обновляем
+            // только LastSeen через троттлированный emit, без пересчёта всего словаря.
             if (_httpsConnections.TryGetValue(connKey, out var conn))
             {
                 conn.PacketCount++;
                 conn.BytesTransferred += packet.PacketLength;
-                UpdateHttpsServerGroup(serverIp);
+                AdjustServerGroup(serverIp, _ => { });
             }
         }
 
         if (_httpsConnections.Count > 5000)
+            EvictClosedHttpsConnections();
+    }
+
+    /// <summary>Точечно откатывает закрытые соединения старше 5 минут, уменьшая счётчики групп.</summary>
+    private void EvictClosedHttpsConnections()
+    {
+        var cutoff = DateTime.UtcNow.AddMinutes(-5);
+        foreach (var k in _httpsConnections.Keys)
         {
-            var cutoff = DateTime.UtcNow.AddMinutes(-5);
-            var cleanedServers = new HashSet<string>();
-            foreach (var k in _httpsConnections.Keys)
+            if (_httpsConnections.TryGetValue(k, out var c) &&
+                c.State == ConnectionState.Closed && c.Timestamp < cutoff &&
+                _httpsConnections.TryRemove(k, out var removed))
             {
-                if (_httpsConnections.TryGetValue(k, out var c) &&
-                    c.State == ConnectionState.Closed && c.Timestamp < cutoff)
+                AdjustServerGroup(removed.ServerIp, g =>
                 {
-                    cleanedServers.Add(c.SrcIp);
-                    cleanedServers.Add(c.DstIp);
-                    _httpsConnections.TryRemove(k, out _);
-                }
+                    g.ClosedCount = Math.Max(0, g.ClosedCount - 1);
+                    g.TotalConnections = Math.Max(0, g.TotalConnections - 1);
+                    g.TotalPackets = Math.Max(0, g.TotalPackets - removed.PacketCount);
+                    g.TotalBytes = Math.Max(0, g.TotalBytes - removed.BytesTransferred);
+                });
             }
-            foreach (var srv in cleanedServers)
-                UpdateHttpsServerGroup(srv);
         }
     }
 
-    private void UpdateHttpsServerGroup(string serverIp)
+    /// <summary>
+    /// Мутирует группу по серверу и испускает UI-событие с троттлингом 300мс на сервер —
+    /// сама мутация счётчиков всегда O(1) и ничем не ограничена, троттлится только перерисовка UI.
+    /// </summary>
+    private void AdjustServerGroup(string serverIp, Action<HttpsServerGroup> mutate)
     {
         var group = _httpsServerGroups.GetOrAdd(serverIp, _ => new HttpsServerGroup
         {
@@ -389,19 +433,17 @@ public class TrafficAnalyzer
         lock (_httpsGroupLock)
         {
             group.LastSeen = DateTime.Now;
-            var conns = _httpsConnections.Values
-                .Where(c => c.DstIp == serverIp || c.SrcIp == serverIp)
-                .ToList();
-
-            group.TotalConnections = conns.Count;
-            group.EstablishedCount = conns.Count(c => c.State == ConnectionState.Established);
-            group.SynSentCount = conns.Count(c => c.State == ConnectionState.SynSent);
-            group.ClosedCount = conns.Count(c => c.State == ConnectionState.Closed);
-            group.TotalPackets = conns.Sum(c => c.PacketCount);
-            group.TotalBytes = conns.Sum(c => c.BytesTransferred);
+            mutate(group);
         }
 
-        OnHttpsServerGroupUpdate?.Invoke(group);
+        var now = DateTime.UtcNow;
+        bool shouldEmit = !_httpsGroupLastEmit.TryGetValue(serverIp, out var last)
+                        || now - last >= HttpsGroupEmitInterval;
+        if (shouldEmit)
+        {
+            _httpsGroupLastEmit[serverIp] = now;
+            OnHttpsServerGroupUpdate?.Invoke(group);
+        }
     }
 
     // ── Eviction — периодическая чистка протухших состояний ────────────────
@@ -424,6 +466,10 @@ public class TrafficAnalyzer
         var rlCutoff = now - StateTtl;
         foreach (var kv in _sigRateLimit)
             if (kv.Value < rlCutoff) _sigRateLimit.TryRemove(kv.Key, out _);
+
+        var emitCutoff = now - StateTtl;
+        foreach (var kv in _httpsGroupLastEmit)
+            if (kv.Value < emitCutoff) _httpsGroupLastEmit.TryRemove(kv.Key, out _);
 
         foreach (var kv in _httpsServerGroups)
         {

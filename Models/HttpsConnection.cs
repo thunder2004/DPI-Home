@@ -21,6 +21,11 @@ public class HttpsConnection
     public string DstIp { get; set; } = string.Empty;
     public int SrcPort { get; set; }
     public int DstPort { get; set; }
+
+    /// <summary>IP HTTPS-сервера (независимо от того, какой из пакетов пришёл первым). Сохраняется,
+    /// чтобы при очистке можно было точно откатиться к нужной группе без перевычисления.</summary>
+    public string ServerIp { get; set; } = string.Empty;
+
     public ConnectionState State { get; set; } = ConnectionState.SynSent;
     public long PacketCount { get; set; }
     public long BytesTransferred { get; set; }
